@@ -58,5 +58,13 @@ services:
       migrate: { condition: service_completed_successfully }
       rabbitmq: { condition: service_healthy }
 
+  publisher:
+    build: .
+    command: python -m scanpod_enterprise.publisher
+    env_file: .env
+    depends_on:
+      migrate: { condition: service_completed_successfully }
+      rabbitmq: { condition: service_healthy }
+
 volumes:
   postgres-data:

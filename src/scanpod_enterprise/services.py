@@ -5,7 +5,7 @@ from fastapi import HTTPException, status
 from sqlalchemy.orm import Session
 
 from .config import settings
-from .models import AuditEvent, InventoryScope, RunStatus, ScanProfile, ScanRun, ScanShard
+from .models import AuditEvent, InventoryScope, OutboxEvent, RunStatus, ScanProfile, ScanRun, ScanShard
 from .models import ShardStatus
 
 
@@ -68,10 +68,32 @@ def dispatch_available_shards(session: Session, run_id: str) -> int:
         shard.dispatched_at = now
         shard.lease_expires_at = now + timedelta(seconds=settings.shard_lease_seconds)
     session.commit()
-    from .worker import celery
     for shard in shards:
-        celery.send_task("scanpod_enterprise.worker.execute_shard", args=[shard.id])
+        session.add(OutboxEvent(topic="scan_shard", payload={"shard_id": shard.id}))
+    session.commit()
+    publish_pending_outbox(session)
     return len(shards)
+
+
+def publish_pending_outbox(session: Session, limit: int = 100) -> int:
+    """Publish durable work records; failed sends remain available for retry."""
+    pending = (session.query(OutboxEvent).filter(OutboxEvent.delivered_at.is_(None)).order_by(OutboxEvent.created_at).limit(limit).all())
+    from .worker import celery
+    delivered = 0
+    for event in pending:
+        try:
+            celery.send_task("scanpod_enterprise.worker.execute_shard", args=[event.payload["shard_id"]])
+        except Exception as exc:  # broker outages must not lose the durable event
+            event.attempts += 1
+            event.last_error = str(exc)
+            session.commit()
+            continue
+        event.attempts += 1
+        event.delivered_at = datetime.now(timezone.utc)
+        event.last_error = None
+        session.commit()
+        delivered += 1
+    return delivered
 
 
 def recover_expired_leases(session: Session, now: datetime | None = None) -> int:

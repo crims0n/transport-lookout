@@ -3,7 +3,7 @@ import time
 from datetime import datetime, timedelta, timezone
 from .db import SessionLocal
 from .models import InventoryScope, ScanProfile, ScanSchedule
-from .services import audit, create_run, recover_expired_leases
+from .services import audit, create_run, publish_pending_outbox, recover_expired_leases
 
 
 def dispatch_due_schedules(now: datetime | None = None) -> int:
@@ -39,6 +39,7 @@ def main() -> None:
     while True:
         with SessionLocal() as session:
             recover_expired_leases(session)
+            publish_pending_outbox(session)
         dispatch_due_schedules()
         time.sleep(30)
 
