@@ -1,0 +1,127 @@
+from scanpod_enterprise.worker import celery
+
+
+def create_scope(client, headers, cidr="10.42.0.0/16"):
+    response = client.post(
+        "/v1/inventory/scopes",
+        headers=headers,
+        json={"name": "test-network", "cidr": cidr, "zone": "default"},
+    )
+    assert response.status_code == 201
+    return response.json()
+
+
+def approve_scope(client, headers, scope_id):
+    response = client.post(f"/v1/inventory/scopes/{scope_id}/approve", headers=headers)
+    assert response.status_code == 200
+
+
+def create_profile(client, headers, zone="default"):
+    response = client.post(
+        "/v1/scan-profiles",
+        headers=headers,
+        json={
+            "name": "limited-tcp",
+            "ports": "22,443",
+            "max_rate": 100,
+            "timeout_seconds": 120,
+            "zone": zone,
+        },
+    )
+    assert response.status_code == 201
+    return response.json()
+
+
+def test_bootstrap_authentication_is_required(client):
+    assert client.get("/v1/me").status_code == 401
+    response = client.get("/v1/me", headers={"Authorization": "Bearer wrong-token"})
+    assert response.status_code == 401
+    # Identity headers supplied by a caller are never trusted as authentication.
+    assert client.get("/v1/me", headers={"X-Forwarded-User": "bootstrap-admin"}).status_code == 401
+
+
+def test_admin_can_provision_an_oidc_subject(client, auth_headers):
+    response = client.put(
+        "/v1/users/alice@example.com",
+        headers=auth_headers,
+        json={"subject": "alice@example.com", "role": "scan_operator"},
+    )
+    assert response.status_code == 200
+    assert response.json() == {"subject": "alice@example.com", "role": "scan_operator"}
+
+
+def test_scope_cannot_be_run_until_approved(client, auth_headers):
+    scope = create_scope(client, auth_headers)
+    profile = create_profile(client, auth_headers)
+
+    response = client.post(
+        "/v1/scan-runs",
+        headers=auth_headers,
+        json={"inventory_scope_id": scope["id"], "profile_id": profile["id"]},
+    )
+
+    assert response.status_code == 409
+    assert response.json()["detail"] == "inventory scope is not approved"
+
+
+def test_run_is_sharded_and_dispatched_after_approval(client, auth_headers, monkeypatch):
+    dispatched = []
+    monkeypatch.setattr(celery, "send_task", lambda name, args: dispatched.append((name, args)))
+    scope = create_scope(client, auth_headers)
+    approve_scope(client, auth_headers, scope["id"])
+    profile = create_profile(client, auth_headers)
+
+    response = client.post(
+        "/v1/scan-runs",
+        headers=auth_headers,
+        json={"inventory_scope_id": scope["id"], "profile_id": profile["id"]},
+    )
+
+    assert response.status_code == 202
+    run = response.json()
+    assert len(run["shards"]) == 256
+    assert all(shard["cidr"].endswith("/24") for shard in run["shards"])
+    assert len(dispatched) == 4
+    assert sum(shard["status"] == "leased" for shard in run["shards"]) == 4
+    assert sum(shard["status"] == "queued" for shard in run["shards"]) == 252
+    assert all(name == "scanpod_enterprise.worker.execute_shard" for name, _ in dispatched)
+
+
+def test_zone_mismatch_rejects_run(client, auth_headers):
+    scope = create_scope(client, auth_headers, "10.43.0.0/16")
+    approve_scope(client, auth_headers, scope["id"])
+    profile = create_profile(client, auth_headers, zone="isolated")
+    response = client.post(
+        "/v1/scan-runs",
+        headers=auth_headers,
+        json={"inventory_scope_id": scope["id"], "profile_id": profile["id"]},
+    )
+    assert response.status_code == 422
+    assert response.json()["detail"] == "profile and inventory scope must use the same worker zone"
+
+
+def test_invalid_profile_ports_are_rejected(client, auth_headers):
+    response = client.post(
+        "/v1/scan-profiles",
+        headers=auth_headers,
+        json={"name": "unsafe", "ports": "22;--script=vuln"},
+    )
+    assert response.status_code == 422
+
+
+def test_cancelled_run_marks_queued_shards_cancelled(client, auth_headers, monkeypatch):
+    monkeypatch.setattr(celery, "send_task", lambda *_, **__: None)
+    scope = create_scope(client, auth_headers, "10.44.0.0/24")
+    approve_scope(client, auth_headers, scope["id"])
+    profile = create_profile(client, auth_headers)
+    run = client.post(
+        "/v1/scan-runs",
+        headers=auth_headers,
+        json={"inventory_scope_id": scope["id"], "profile_id": profile["id"]},
+    ).json()
+
+    response = client.post(f"/v1/scan-runs/{run['id']}/cancel", headers=auth_headers)
+
+    assert response.status_code == 200
+    assert response.json()["status"] == "cancelled"
+    assert response.json()["shards"][0]["status"] == "cancelled"

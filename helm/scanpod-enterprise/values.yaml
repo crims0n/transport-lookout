@@ -1,0 +1,14 @@
+image:
+  repository: scanpod-enterprise
+  tag: latest
+  pullPolicy: IfNotPresent
+replicas: 2
+workerReplicas: 2
+service:
+  port: 8080
+env:
+  databaseUrl: ""
+  amqpUrl: ""
+  bootstrapEnabled: "false"
+nodeSelector: {}
+

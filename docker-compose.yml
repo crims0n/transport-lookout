@@ -1,0 +1,62 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: scanpod
+      POSTGRES_USER: scanpod
+      POSTGRES_PASSWORD: scanpod
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U scanpod -d scanpod"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+
+  rabbitmq:
+    image: rabbitmq:3.13-management-alpine
+    environment:
+      RABBITMQ_DEFAULT_USER: scanpod
+      RABBITMQ_DEFAULT_PASS: scanpod
+    healthcheck:
+      test: ["CMD", "rabbitmq-diagnostics", "-q", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  api:
+    build: .
+    command: uvicorn scanpod_enterprise.main:app --host 0.0.0.0 --port 8080
+    env_file: .env
+    ports: ["8080:8080"]
+    depends_on:
+      migrate: { condition: service_completed_successfully }
+      postgres: { condition: service_healthy }
+      rabbitmq: { condition: service_healthy }
+
+  migrate:
+    build: .
+    command: alembic upgrade head
+    env_file: .env
+    depends_on:
+      postgres: { condition: service_healthy }
+
+  worker:
+    build: .
+    command: celery -A scanpod_enterprise.worker worker --loglevel=INFO
+    env_file: .env
+    depends_on:
+      migrate: { condition: service_completed_successfully }
+      postgres: { condition: service_healthy }
+      rabbitmq: { condition: service_healthy }
+
+  scheduler:
+    build: .
+    command: python -m scanpod_enterprise.scheduler
+    env_file: .env
+    depends_on:
+      migrate: { condition: service_completed_successfully }
+      rabbitmq: { condition: service_healthy }
+
+volumes:
+  postgres-data:

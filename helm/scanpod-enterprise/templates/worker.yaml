@@ -1,0 +1,23 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ .Release.Name }}-worker
+spec:
+  replicas: {{ .Values.workerReplicas }}
+  selector: { matchLabels: { app: {{ .Release.Name }}-worker } }
+  template:
+    metadata: { labels: { app: {{ .Release.Name }}-worker } }
+    spec:
+      securityContext: { runAsNonRoot: true, seccompProfile: { type: RuntimeDefault } }
+      nodeSelector: {{ toYaml .Values.nodeSelector | nindent 8 }}
+      containers:
+        - name: worker
+          image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
+          args: ["celery", "-A", "scanpod_enterprise.worker", "worker", "--loglevel=INFO"]
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities: { drop: ["ALL"], add: ["NET_RAW"] }
+          env:
+            - { name: SCANPOD_DATABASE_URL, value: {{ .Values.env.databaseUrl | quote }} }
+            - { name: SCANPOD_AMQP_URL, value: {{ .Values.env.amqpUrl | quote }} }
+
