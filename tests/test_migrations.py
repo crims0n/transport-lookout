@@ -22,3 +22,4 @@ def test_blank_database_upgrades_to_the_current_schema(tmp_path):
     assert "discovery_artifact_key" in {column["name"] for column in inspector.get_columns("scan_shards")}
     assert "max_concurrent_shards" in {column["name"] for column in inspector.get_columns("scan_profiles")}
     assert "scanner_mode" in {column["name"] for column in inspector.get_columns("scan_profiles")}
+    assert "scan_count" in {column["name"] for column in inspector.get_columns("current_exposures")}

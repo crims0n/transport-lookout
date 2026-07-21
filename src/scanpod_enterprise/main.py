@@ -297,18 +297,43 @@ def filtered_exposures(session: Session, scope_id: str | None, host: str | None,
         query = query.filter(CurrentExposure.port == port)
     if service:
         query = query.filter(CurrentExposure.service.ilike(f"%{service}%"))
-    return query.order_by(CurrentExposure.address, CurrentExposure.port)
+    return query
+
+
+def deduplicated_exposures(session: Session, scope_id: str | None = None, host: str | None = None, port: int | None = None, service: str | None = None):
+    """Present one global row per host/protocol/port/service across scan profiles."""
+    partition = [CurrentExposure.address, CurrentExposure.protocol, CurrentExposure.port, CurrentExposure.service]
+    ranked = filtered_exposures(session, scope_id, host, port, service).with_entities(
+        CurrentExposure.id, CurrentExposure.inventory_scope_id, CurrentExposure.profile_id, CurrentExposure.latest_run_id,
+        CurrentExposure.zone, CurrentExposure.address, CurrentExposure.protocol, CurrentExposure.port,
+        CurrentExposure.service, CurrentExposure.product, CurrentExposure.version,
+        func.row_number().over(partition_by=partition, order_by=CurrentExposure.last_seen_at.desc()).label("row_rank"),
+        func.min(CurrentExposure.first_seen_at).over(partition_by=partition).label("first_seen_at"),
+        func.max(CurrentExposure.last_seen_at).over(partition_by=partition).label("last_seen_at"),
+        func.sum(CurrentExposure.scan_count).over(partition_by=partition).label("scan_count"),
+    ).subquery()
+    return session.query(ranked).filter(ranked.c.row_rank == 1).order_by(ranked.c.address, ranked.c.port)
+
+
+def to_exposure_read(item) -> ExposureRead:
+    return ExposureRead(
+        id=item.id, inventory_scope_id=item.inventory_scope_id, profile_id=item.profile_id, latest_run_id=item.latest_run_id,
+        zone=item.zone, address=item.address, protocol=item.protocol, port=item.port, service=item.service,
+        product=item.product, version=item.version, first_seen_at=item.first_seen_at, last_seen_at=item.last_seen_at,
+        scan_count=item.scan_count,
+    )
 
 
 @app.get("/v1/exposures", response_model=list[ExposureRead])
 def list_exposures(scope_id: str | None = None, host: str | None = None, port: int | None = None, service: str | None = None, limit: int = 100, offset: int = 0, session: Session = Depends(get_session), _: User = Depends(current_user)):
-    return filtered_exposures(session, scope_id, host, port, service).offset(max(offset, 0)).limit(min(max(limit, 1), 500)).all()
+    items = deduplicated_exposures(session, scope_id, host, port, service).offset(max(offset, 0)).limit(min(max(limit, 1), 500)).all()
+    return [to_exposure_read(item) for item in items]
 
 
 @app.get("/v1/exposures/export")
 def export_exposures(format: str = "csv", scope_id: str | None = None, host: str | None = None, port: int | None = None, service: str | None = None, session: Session = Depends(get_session), _: User = Depends(current_user)):
-    items = filtered_exposures(session, scope_id, host, port, service).limit(10_000).all()
-    rows = [ExposureRead.model_validate(item).model_dump(mode="json") for item in items]
+    items = deduplicated_exposures(session, scope_id, host, port, service).limit(10_000).all()
+    rows = [to_exposure_read(item).model_dump(mode="json") for item in items]
     if format == "json":
         return Response(content=json.dumps(jsonable_encoder(rows)), media_type="application/json", headers={"Content-Disposition": "attachment; filename=transport-lookout-exposures.json"})
     if format != "csv":
@@ -328,7 +353,8 @@ def get_exposure_diff(scope_id: str, profile_id: str, session: Session = Depends
 
 @app.get("/v1/exposures/summary", response_model=ExposureSummary)
 def exposure_summary(session: Session = Depends(get_session), _: User = Depends(current_user)):
-    open_hosts, open_services, unique_ports, latest = session.query(func.count(func.distinct(CurrentExposure.address)), func.count(CurrentExposure.id), func.count(func.distinct(CurrentExposure.port)), func.max(CurrentExposure.last_seen_at)).one()
+    exposures = deduplicated_exposures(session).subquery()
+    open_hosts, open_services, unique_ports, latest = session.query(func.count(func.distinct(exposures.c.address)), func.count(exposures.c.id), func.count(func.distinct(exposures.c.port)), func.max(exposures.c.last_seen_at)).one()
     return ExposureSummary(open_hosts=open_hosts, open_services=open_services, unique_ports=unique_ports, latest_observation_at=latest)
 
 

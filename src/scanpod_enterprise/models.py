@@ -164,6 +164,7 @@ class CurrentExposure(Base):
     version: Mapped[str | None] = mapped_column(String(128), nullable=True)
     first_seen_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now)
     last_seen_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now, index=True)
+    scan_count: Mapped[int] = mapped_column(Integer, default=1)
 
 
 class AuditEvent(Base):

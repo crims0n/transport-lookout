@@ -166,6 +166,7 @@ class ExposureRead(BaseModel):
     version: str | None
     first_seen_at: datetime
     last_seen_at: datetime
+    scan_count: int
 
     model_config = {"from_attributes": True}
 

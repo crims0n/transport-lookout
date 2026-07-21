@@ -141,13 +141,14 @@ def materialize_current_exposures(session: Session, run: ScanRun) -> int:
     scope = session.get(InventoryScope, run.inventory_scope_id)
     if not scope:
         return 0
-    existing = {(item.address, item.protocol, item.port): item.first_seen_at for item in session.query(CurrentExposure).filter_by(inventory_scope_id=run.inventory_scope_id, profile_id=run.profile_id)}
+    existing = {(item.address, item.protocol, item.port): (item.first_seen_at, item.scan_count) for item in session.query(CurrentExposure).filter_by(inventory_scope_id=run.inventory_scope_id, profile_id=run.profile_id)}
     session.query(CurrentExposure).filter_by(inventory_scope_id=run.inventory_scope_id, profile_id=run.profile_id).delete()
     observed_at = run.completed_at or datetime.now(timezone.utc)
     rows = (session.query(HostObservation, ServiceObservation).join(ServiceObservation, ServiceObservation.host_observation_id == HostObservation.id).filter(HostObservation.run_id == run.id, HostObservation.state == "up", ServiceObservation.state == "open").all())
     for host, service in rows:
         key = (host.address, service.protocol, service.port)
-        session.add(CurrentExposure(inventory_scope_id=run.inventory_scope_id, profile_id=run.profile_id, latest_run_id=run.id, zone=scope.zone, address=host.address, protocol=service.protocol, port=service.port, service=service.service, product=service.product, version=service.version, first_seen_at=existing.get(key, observed_at), last_seen_at=observed_at))
+        first_seen_at, scan_count = existing.get(key, (observed_at, 0))
+        session.add(CurrentExposure(inventory_scope_id=run.inventory_scope_id, profile_id=run.profile_id, latest_run_id=run.id, zone=scope.zone, address=host.address, protocol=service.protocol, port=service.port, service=service.service, product=service.product, version=service.version, first_seen_at=first_seen_at, last_seen_at=observed_at, scan_count=scan_count + 1))
     return len(rows)
 
 
