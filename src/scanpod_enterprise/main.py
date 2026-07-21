@@ -20,7 +20,7 @@ async def lifespan(_: FastAPI):
     yield
 
 
-app = FastAPI(title="ScanPod Enterprise API", version="0.1.0", lifespan=lifespan)
+app = FastAPI(title="Transport Lookout API", version="0.1.0", lifespan=lifespan)
 if settings.cors_origins:
     app.add_middleware(CORSMiddleware, allow_origins=settings.cors_origins.split(","), allow_credentials=True, allow_methods=["GET", "POST"], allow_headers=["Authorization", "Content-Type"])
 

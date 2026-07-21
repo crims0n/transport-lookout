@@ -7,4 +7,4 @@ __pycache__/
 dist/
 node_modules/
 coverage.xml
-
+*.egg-info/

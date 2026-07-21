@@ -1,5 +1,5 @@
 image:
-  repository: scanpod-enterprise
+  repository: transport-lookout
   tag: latest
   pullPolicy: IfNotPresent
 replicas: 2
@@ -11,4 +11,3 @@ env:
   amqpUrl: ""
   bootstrapEnabled: "false"
 nodeSelector: {}
-

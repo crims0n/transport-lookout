@@ -1,7 +1,6 @@
 apiVersion: v2
-name: scanpod-enterprise
-description: Authorized network scanning control plane
+name: transport-lookout
+description: Policy-governed network exposure control plane
 type: application
 version: 0.1.0
 appVersion: 0.1.0
-
