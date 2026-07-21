@@ -2,8 +2,18 @@
 import time
 from datetime import datetime, timedelta, timezone
 from .db import SessionLocal
-from .models import InventoryScope, ScanProfile, ScanSchedule
-from .services import audit, create_run, publish_pending_outbox, recover_expired_leases
+from .models import InventoryScope, RunStatus, ScanProfile, ScanRun, ScanSchedule, ScanShard, ShardStatus
+from .services import audit, create_run, dispatch_available_shards, publish_pending_outbox, recover_expired_leases
+
+
+def dispatch_ready_runs(now: datetime | None = None) -> int:
+    now = now or datetime.now(timezone.utc)
+    dispatched = 0
+    with SessionLocal() as session:
+        run_ids = (session.query(ScanRun.id).join(ScanShard).filter(ScanRun.status.in_([RunStatus.queued, RunStatus.running]), ScanShard.status == ShardStatus.queued, (ScanShard.retry_not_before.is_(None) | (ScanShard.retry_not_before <= now))).distinct().all())
+        for (run_id,) in run_ids:
+            dispatched += dispatch_available_shards(session, run_id)
+    return dispatched
 
 
 def dispatch_due_schedules(now: datetime | None = None) -> int:
@@ -40,6 +50,7 @@ def main() -> None:
         with SessionLocal() as session:
             recover_expired_leases(session)
             publish_pending_outbox(session)
+        dispatch_ready_runs()
         dispatch_due_schedules()
         time.sleep(30)
 

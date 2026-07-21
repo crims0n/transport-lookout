@@ -4,7 +4,9 @@ The control plane is responsible for dispatch policy. This worker receives only
 a shard identifier and reconstructs all execution settings from durable state.
 """
 import subprocess
-from datetime import datetime, timezone
+import socket
+import time
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 from celery import Celery
@@ -37,6 +39,8 @@ def execute_shard(self, shard_id: str) -> None:
             return
         shard.status = ShardStatus.running
         shard.lease_expires_at = None
+        shard.worker_id = f"{socket.gethostname()}:{self.request.hostname}"
+        shard.heartbeat_at = datetime.now(timezone.utc)
         shard.attempts += 1
         run.status = RunStatus.running
         run.started_at = run.started_at or datetime.now(timezone.utc)
@@ -44,19 +48,52 @@ def execute_shard(self, shard_id: str) -> None:
         dispatch_available_shards(session, run.id)
         artifact = Path("/tmp") / f"scanpod-{shard.id}.xml"
         command = ["nmap", "-oX", str(artifact), "-p", profile.ports, *profile.arguments.split(), "--max-rate", str(profile.max_rate), shard.cidr]
+        cancelled = False
         try:
-            subprocess.run(command, check=True, timeout=profile.timeout_seconds, capture_output=True, text=True)
-            normalize_nmap_xml(session, artifact, run.id, shard.id)
-            shard.artifact_key = store_artifact(artifact, run.id, shard.id)
-            shard.status = ShardStatus.completed
+            process = subprocess.Popen(command, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+            deadline = time.monotonic() + profile.timeout_seconds
+            while process.poll() is None:
+                time.sleep(settings.worker_heartbeat_seconds)
+                session.refresh(run)
+                session.refresh(shard)
+                shard.heartbeat_at = datetime.now(timezone.utc)
+                session.commit()
+                if run.status == RunStatus.cancelled:
+                    cancelled = True
+                    process.terminate()
+                    try:
+                        process.wait(timeout=settings.scan_cancel_grace_seconds)
+                    except subprocess.TimeoutExpired:
+                        process.kill()
+                    break
+                if time.monotonic() >= deadline:
+                    process.kill()
+                    raise subprocess.TimeoutExpired(command, profile.timeout_seconds)
+            stdout, stderr = process.communicate()
+            if cancelled:
+                shard.status = ShardStatus.cancelled
+                shard.error = "cancelled by operator"
+            elif process.returncode != 0:
+                raise subprocess.CalledProcessError(process.returncode, command, output=stdout, stderr=stderr)
+            else:
+                normalize_nmap_xml(session, artifact, run.id, shard.id)
+                shard.artifact_key = store_artifact(artifact, run.id, shard.id)
+                shard.status = ShardStatus.completed
         except (subprocess.CalledProcessError, subprocess.TimeoutExpired) as exc:
-            shard.status, shard.error = ShardStatus.failed, str(exc)
+            shard.error = str(exc)
+            if shard.attempts >= settings.max_shard_attempts:
+                shard.status = ShardStatus.dead_letter
+            else:
+                shard.status = ShardStatus.queued
+                shard.retry_not_before = datetime.now(timezone.utc) + timedelta(seconds=2 ** shard.attempts * 30)
         finally:
             if artifact.exists():
                 artifact.unlink()
-        terminal = session.query(ScanShard).filter(ScanShard.run_id == run.id, ScanShard.status.notin_([ShardStatus.completed, ShardStatus.failed, ShardStatus.cancelled])).count() == 0
+        shard.worker_id = None
+        shard.heartbeat_at = None
+        terminal = session.query(ScanShard).filter(ScanShard.run_id == run.id, ScanShard.status.notin_([ShardStatus.completed, ShardStatus.failed, ShardStatus.cancelled, ShardStatus.dead_letter])).count() == 0
         if terminal:
-            failed = session.query(ScanShard).filter_by(run_id=run.id, status=ShardStatus.failed).count()
+            failed = session.query(ScanShard).filter(ScanShard.run_id == run.id, ScanShard.status.in_([ShardStatus.failed, ShardStatus.dead_letter])).count()
             run.status = RunStatus.failed if failed else RunStatus.completed
             run.completed_at = datetime.now(timezone.utc)
         session.commit()

@@ -34,6 +34,7 @@ class ShardStatus(str, enum.Enum):
     completed = "completed"
     failed = "failed"
     cancelled = "cancelled"
+    dead_letter = "dead_letter"
 
 
 class User(Base):
@@ -105,6 +106,9 @@ class ScanShard(Base):
     attempts: Mapped[int] = mapped_column(Integer, default=0)
     dispatched_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     lease_expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True, index=True)
+    worker_id: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    heartbeat_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True, index=True)
+    retry_not_before: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True, index=True)
     artifact_key: Mapped[str | None] = mapped_column(String(512), nullable=True)
     error: Mapped[str | None] = mapped_column(Text, nullable=True)
 

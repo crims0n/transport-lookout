@@ -17,6 +17,9 @@ class Settings(BaseSettings):
     oidc_audience: str = ""
     oidc_jwks_url: str = ""
     shard_lease_seconds: int = 3600
+    worker_heartbeat_seconds: int = 15
+    scan_cancel_grace_seconds: int = 20
+    max_shard_attempts: int = 3
 
 
 settings = Settings()

@@ -2,6 +2,7 @@ import ipaddress
 from datetime import datetime, timedelta, timezone
 
 from fastapi import HTTPException, status
+from sqlalchemy import or_
 from sqlalchemy.orm import Session
 
 from .config import settings
@@ -61,12 +62,13 @@ def dispatch_available_shards(session: Session, run_id: str) -> int:
     capacity = max(profile.max_concurrent_shards - active, 0)
     if not capacity:
         return 0
-    shards = (session.query(ScanShard).filter_by(run_id=run_id, status=ShardStatus.queued).order_by(ScanShard.cidr).limit(capacity).with_for_update(skip_locked=True).all())
     now = datetime.now(timezone.utc)
+    shards = (session.query(ScanShard).filter(ScanShard.run_id == run_id, ScanShard.status == ShardStatus.queued, or_(ScanShard.retry_not_before.is_(None), ScanShard.retry_not_before <= now)).order_by(ScanShard.cidr).limit(capacity).with_for_update(skip_locked=True).all())
     for shard in shards:
         shard.status = ShardStatus.leased
         shard.dispatched_at = now
         shard.lease_expires_at = now + timedelta(seconds=settings.shard_lease_seconds)
+        shard.retry_not_before = None
     session.commit()
     for shard in shards:
         session.add(OutboxEvent(topic="scan_shard", payload={"shard_id": shard.id}))
@@ -98,10 +100,15 @@ def publish_pending_outbox(session: Session, limit: int = 100) -> int:
 
 def recover_expired_leases(session: Session, now: datetime | None = None) -> int:
     now = now or datetime.now(timezone.utc)
-    stale = session.query(ScanShard).filter(ScanShard.status == ShardStatus.leased, ScanShard.lease_expires_at < now).all()
+    stale = session.query(ScanShard).filter(or_(
+        (ScanShard.status == ShardStatus.leased) & (ScanShard.lease_expires_at < now),
+        (ScanShard.status == ShardStatus.running) & (ScanShard.heartbeat_at < now - timedelta(seconds=settings.shard_lease_seconds)),
+    )).all()
     for shard in stale:
         shard.status = ShardStatus.queued
         shard.lease_expires_at = None
+        shard.worker_id = None
+        shard.heartbeat_at = None
     session.commit()
     for run_id in {shard.run_id for shard in stale}:
         dispatch_available_shards(session, run_id)
