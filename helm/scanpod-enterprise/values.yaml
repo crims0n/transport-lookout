@@ -4,13 +4,41 @@ image:
   pullPolicy: IfNotPresent
 replicas: 2
 workerReplicas: 2
+publisherReplicas: 1
 service:
   port: 8080
 env:
+  # Prefer existingSecret in real deployments. If both URLs are supplied here,
+  # the chart creates a release-scoped Secret for convenience.
   databaseUrl: ""
   amqpUrl: ""
+  existingSecret: ""
+  databaseUrlKey: database-url
+  amqpUrlKey: amqp-url
   bootstrapEnabled: "false"
+  artifactBackend: filesystem
+  artifactS3Bucket: ""
+  artifactS3Prefix: transport-lookout
+  artifactS3Region: ""
+  artifactS3EndpointUrl: ""
 nodeSelector: {}
+serviceAccount:
+  # Use annotations for workload identity / IRSA when artifactBackend is s3.
+  create: true
+  name: ""
+  annotations: {}
+migrate:
+  backoffLimit: 3
+resources:
+  api: { requests: { cpu: 100m, memory: 256Mi }, limits: { cpu: "1", memory: 512Mi } }
+  worker: { requests: { cpu: 250m, memory: 512Mi }, limits: { cpu: "2", memory: 1Gi } }
+  scheduler: { requests: { cpu: 100m, memory: 256Mi }, limits: { cpu: 500m, memory: 512Mi } }
+  publisher: { requests: { cpu: 100m, memory: 256Mi }, limits: { cpu: 500m, memory: 512Mi } }
+  migrate: { requests: { cpu: 100m, memory: 256Mi }, limits: { cpu: 500m, memory: 512Mi } }
+networkPolicy:
+  # Enable only after supplying ingress controller / operator namespace selectors.
+  enabled: false
+  apiIngressFrom: []
 monitoring:
   enabled: false
   namespace: monitoring

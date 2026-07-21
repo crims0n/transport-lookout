@@ -69,9 +69,9 @@ def dispatch_available_shards(session: Session, run_id: str) -> int:
         shard.dispatched_at = now
         shard.lease_expires_at = now + timedelta(seconds=settings.shard_lease_seconds)
         shard.retry_not_before = None
-    session.commit()
-    for shard in shards:
         session.add(OutboxEvent(topic="scan_shard", payload={"shard_id": shard.id}))
+    # The lease and durable publish intent must commit together. If the process
+    # stops before broker delivery, the publisher can safely retry the outbox.
     session.commit()
     publish_pending_outbox(session)
     return len(shards)

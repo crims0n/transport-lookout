@@ -2,14 +2,14 @@
 apiVersion: monitoring.coreos.com/v1
 kind: ServiceMonitor
 metadata:
-  name: {{ .Release.Name }}
+  name: {{ include "transport-lookout.fullname" . }}
   namespace: {{ .Values.monitoring.namespace }}
   labels:
     app.kubernetes.io/name: transport-lookout
 spec:
   selector:
     matchLabels:
-      app: {{ .Release.Name }}-api
+      app: {{ include "transport-lookout.fullname" . }}-api
   endpoints:
     - port: http
       path: /metrics

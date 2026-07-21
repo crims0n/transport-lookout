@@ -42,6 +42,8 @@ Connect the console to `http://localhost:8080` with the configured bearer token.
 
 Production deployments must disable bootstrap access and configure OIDC issuer, audience, and JWKS settings. Deploy the control plane, scheduler, publisher, and workers with the provided Helm chart as a starting point; isolate scanning workers in dedicated network zones and node pools.
 
+The chart runs Alembic as a pre-install/pre-upgrade Job and expects a pre-created Secret containing `database-url` and `amqp-url`. Point `env.existingSecret` at that Secret; do not place production URLs in committed values files. It includes a service account that can be annotated for workload identity when using S3 artifacts. `networkPolicy` is intentionally opt-in because ingress-controller and monitoring namespace labels vary by cluster.
+
 Raw scan XML uses filesystem storage by default, which keeps local Docker Compose testing self-contained. For durable production storage set `SCANPOD_ARTIFACT_BACKEND=s3` and provide `SCANPOD_ARTIFACT_S3_BUCKET`; optionally configure `SCANPOD_ARTIFACT_S3_PREFIX`, `SCANPOD_ARTIFACT_S3_REGION`, and `SCANPOD_ARTIFACT_S3_ENDPOINT_URL` for an S3-compatible service. Credentials come from the worker's standard AWS SDK credential chain.
 
 ## Operations endpoints

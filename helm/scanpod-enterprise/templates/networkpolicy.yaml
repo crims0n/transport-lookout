@@ -1,0 +1,15 @@
+{{- if .Values.networkPolicy.enabled }}
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ include "transport-lookout.fullname" . }}-api
+spec:
+  podSelector:
+    matchLabels: { app: {{ include "transport-lookout.fullname" . }}-api }
+  policyTypes: [Ingress]
+  ingress:
+    - from:
+{{ toYaml .Values.networkPolicy.apiIngressFrom | nindent 8 }}
+      ports:
+        - { protocol: TCP, port: 8080 }
+{{- end }}

@@ -1,24 +1,25 @@
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: {{ .Release.Name }}-api
+  name: {{ include "transport-lookout.fullname" . }}-api
 spec:
   replicas: {{ .Values.replicas }}
-  selector: { matchLabels: { app: {{ .Release.Name }}-api } }
+  selector: { matchLabels: { app: {{ include "transport-lookout.fullname" . }}-api } }
   template:
-    metadata: { labels: { app: {{ .Release.Name }}-api } }
+    metadata: { labels: { app: {{ include "transport-lookout.fullname" . }}-api } }
     spec:
+      serviceAccountName: {{ include "transport-lookout.serviceAccountName" . }}
       securityContext: { runAsNonRoot: true, seccompProfile: { type: RuntimeDefault } }
       nodeSelector: {{ toYaml .Values.nodeSelector | nindent 8 }}
       containers:
         - name: api
           image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
           args: ["uvicorn", "scanpod_enterprise.main:app", "--host", "0.0.0.0", "--port", "8080"]
           ports: [{ containerPort: 8080 }]
           securityContext: { allowPrivilegeEscalation: false, capabilities: { drop: ["ALL"] } }
+          resources: {{ toYaml .Values.resources.api | nindent 12 }}
           env:
-            - { name: SCANPOD_DATABASE_URL, value: {{ .Values.env.databaseUrl | quote }} }
-            - { name: SCANPOD_AMQP_URL, value: {{ .Values.env.amqpUrl | quote }} }
-            - { name: SCANPOD_BOOTSTRAP_ENABLED, value: {{ .Values.env.bootstrapEnabled | quote }} }
+{{ include "transport-lookout.env" . | nindent 12 }}
           livenessProbe: { httpGet: { path: /healthz, port: 8080 } }
           readinessProbe: { httpGet: { path: /readyz, port: 8080 } }

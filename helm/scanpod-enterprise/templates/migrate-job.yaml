@@ -1,0 +1,27 @@
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: {{ include "transport-lookout.fullname" . }}-migrate
+  annotations:
+    "helm.sh/hook": pre-install,pre-upgrade
+    "helm.sh/hook-weight": "-10"
+    "helm.sh/hook-delete-policy": before-hook-creation,hook-succeeded
+spec:
+  backoffLimit: {{ .Values.migrate.backoffLimit }}
+  template:
+    metadata:
+      labels: { app: {{ include "transport-lookout.fullname" . }}-migrate }
+    spec:
+      restartPolicy: OnFailure
+      serviceAccountName: {{ include "transport-lookout.serviceAccountName" . }}
+      securityContext: { runAsNonRoot: true, seccompProfile: { type: RuntimeDefault } }
+      nodeSelector: {{ toYaml .Values.nodeSelector | nindent 8 }}
+      containers:
+        - name: migrate
+          image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          args: ["alembic", "upgrade", "head"]
+          securityContext: { allowPrivilegeEscalation: false, capabilities: { drop: ["ALL"] } }
+          resources: {{ toYaml .Values.resources.migrate | nindent 12 }}
+          env:
+{{ include "transport-lookout.env" . | nindent 12 }}

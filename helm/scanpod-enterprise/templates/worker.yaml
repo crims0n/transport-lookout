@@ -1,23 +1,24 @@
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: {{ .Release.Name }}-worker
+  name: {{ include "transport-lookout.fullname" . }}-worker
 spec:
   replicas: {{ .Values.workerReplicas }}
-  selector: { matchLabels: { app: {{ .Release.Name }}-worker } }
+  selector: { matchLabels: { app: {{ include "transport-lookout.fullname" . }}-worker } }
   template:
-    metadata: { labels: { app: {{ .Release.Name }}-worker } }
+    metadata: { labels: { app: {{ include "transport-lookout.fullname" . }}-worker } }
     spec:
+      serviceAccountName: {{ include "transport-lookout.serviceAccountName" . }}
       securityContext: { runAsNonRoot: true, seccompProfile: { type: RuntimeDefault } }
       nodeSelector: {{ toYaml .Values.nodeSelector | nindent 8 }}
       containers:
         - name: worker
           image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
           args: ["celery", "-A", "scanpod_enterprise.worker", "worker", "--loglevel=INFO"]
           securityContext:
             allowPrivilegeEscalation: false
             capabilities: { drop: ["ALL"], add: ["NET_RAW"] }
+          resources: {{ toYaml .Values.resources.worker | nindent 12 }}
           env:
-            - { name: SCANPOD_DATABASE_URL, value: {{ .Values.env.databaseUrl | quote }} }
-            - { name: SCANPOD_AMQP_URL, value: {{ .Values.env.amqpUrl | quote }} }
-
+{{ include "transport-lookout.env" . | nindent 12 }}

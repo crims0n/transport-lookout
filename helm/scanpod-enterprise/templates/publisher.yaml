@@ -1,0 +1,22 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "transport-lookout.fullname" . }}-publisher
+spec:
+  replicas: {{ .Values.publisherReplicas }}
+  selector: { matchLabels: { app: {{ include "transport-lookout.fullname" . }}-publisher } }
+  template:
+    metadata: { labels: { app: {{ include "transport-lookout.fullname" . }}-publisher } }
+    spec:
+      serviceAccountName: {{ include "transport-lookout.serviceAccountName" . }}
+      securityContext: { runAsNonRoot: true, seccompProfile: { type: RuntimeDefault } }
+      nodeSelector: {{ toYaml .Values.nodeSelector | nindent 8 }}
+      containers:
+        - name: publisher
+          image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          args: ["python", "-m", "scanpod_enterprise.publisher"]
+          securityContext: { allowPrivilegeEscalation: false, capabilities: { drop: ["ALL"] } }
+          resources: {{ toYaml .Values.resources.publisher | nindent 12 }}
+          env:
+{{ include "transport-lookout.env" . | nindent 12 }}

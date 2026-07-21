@@ -1,8 +1,8 @@
 apiVersion: v1
 kind: Service
 metadata:
-  name: {{ .Release.Name }}
-  labels: { app: {{ .Release.Name }}-api }
+  name: {{ include "transport-lookout.fullname" . }}
+  labels: { app: {{ include "transport-lookout.fullname" . }}-api }
 spec:
-  selector: { app: {{ .Release.Name }}-api }
+  selector: { app: {{ include "transport-lookout.fullname" . }}-api }
   ports: [{ name: http, port: {{ .Values.service.port }}, targetPort: 8080 }]
