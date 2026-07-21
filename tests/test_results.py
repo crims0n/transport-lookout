@@ -2,7 +2,7 @@ from pathlib import Path
 
 from scanpod_enterprise.models import HostObservation, ServiceObservation
 from scanpod_enterprise.config import settings
-from scanpod_enterprise.results import artifact_key, normalize_nmap_xml, store_artifact
+from scanpod_enterprise.results import artifact_key, masscan_candidates, masscan_observations, normalize_nmap_xml, store_artifact
 
 
 def test_filesystem_artifact_storage_is_the_local_default(tmp_path: Path, monkeypatch):
@@ -34,3 +34,15 @@ def test_nmap_xml_normalizes_hosts_and_services(tmp_path: Path, clean_database):
 
     assert (host.address, host.hostname, host.state) == ("10.1.2.3", "server.example", "up")
     assert (service.port, service.protocol, service.service, service.product) == (443, "tcp", "https", "nginx")
+
+
+def test_masscan_candidates_only_include_open_tcp_ipv4_hosts(tmp_path: Path):
+    xml = tmp_path / "masscan.xml"
+    xml.write_text("""<nmaprun scanner='masscan'>
+    <host><address addr='10.1.2.3' addrtype='ipv4'/><ports><port protocol='tcp' portid='443'><state state='open'/></port></ports></host>
+    <host><address addr='10.1.2.4' addrtype='ipv4'/><ports><port protocol='tcp' portid='22'><state state='closed'/></port></ports></host>
+    <host><address addr='2001:db8::1' addrtype='ipv6'/><ports><port protocol='tcp' portid='443'><state state='open'/></port></ports></host>
+    </nmaprun>""")
+
+    assert masscan_candidates(xml) == ["10.1.2.3"]
+    assert masscan_observations(xml) == [("10.1.2.3", "tcp", 443)]

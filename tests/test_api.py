@@ -1,3 +1,5 @@
+from scanpod_enterprise.db import SessionLocal
+from scanpod_enterprise.models import DiscoveryObservation, RunStatus, ScanRun, ScanShard
 from scanpod_enterprise.worker import celery
 
 
@@ -151,6 +153,39 @@ def test_invalid_profile_ports_are_rejected(client, auth_headers):
         json={"name": "unsafe", "ports": "22;--script=vuln"},
     )
     assert response.status_code == 422
+
+
+def test_profile_can_enable_controlled_masscan_discovery(client, auth_headers):
+    response = client.post(
+        "/v1/scan-profiles",
+        headers=auth_headers,
+        json={"name": "perimeter-tcp", "ports": "80,443", "scanner_mode": "masscan_then_nmap", "max_rate": 500, "timeout_seconds": 900, "zone": "default"},
+    )
+    assert response.status_code == 201
+    assert response.json()["scanner_mode"] == "masscan_then_nmap"
+
+    udp = client.post(
+        "/v1/scan-profiles",
+        headers=auth_headers,
+        json={"name": "udp-discovery", "ports": "U:53", "scanner_mode": "masscan_then_nmap", "max_rate": 500, "timeout_seconds": 900, "zone": "default"},
+    )
+    assert udp.status_code == 422
+
+
+def test_run_masscan_results_are_available_for_review(client, auth_headers):
+    with SessionLocal() as session:
+        run = ScanRun(inventory_scope_id="scope", profile_id="profile", requested_by="operator", status=RunStatus.completed)
+        session.add(run)
+        session.flush()
+        shard = ScanShard(run_id=run.id, cidr="10.90.0.0/24", zone="default")
+        session.add(shard)
+        session.flush()
+        session.add(DiscoveryObservation(run_id=run.id, shard_id=shard.id, address="10.90.0.10", protocol="tcp", port=443))
+        session.commit()
+
+    response = client.get(f"/v1/scan-runs/{run.id}/masscan-results", headers=auth_headers)
+    assert response.status_code == 200
+    assert response.json() == [{"shard_id": shard.id, "cidr": "10.90.0.0/24", "address": "10.90.0.10", "protocol": "tcp", "port": 443}]
 
 
 def test_cancelled_run_marks_queued_shards_cancelled(client, auth_headers, monkeypatch):

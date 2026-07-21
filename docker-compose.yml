@@ -44,6 +44,7 @@ services:
   worker:
     build: .
     command: celery -A scanpod_enterprise.worker worker --loglevel=INFO
+    cap_add: [NET_RAW]
     env_file: .env
     depends_on:
       migrate: { condition: service_completed_successfully }

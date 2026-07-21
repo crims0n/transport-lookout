@@ -18,8 +18,8 @@ from .config import settings
 from .db import get_session
 from .db import engine
 from .metrics import API_DURATION, API_REQUESTS, render_metrics
-from .models import AuditEvent, CurrentExposure, HostObservation, InventoryScope, Role, ScanProfile, ScanRun, ScanSchedule, ScanShard, ServiceObservation, User
-from .schemas import AuditEventRead, ExposureDiffRead, ExposureRead, ExposureSummary, HostRead, ProfileCreate, ProfileRead, RunCreate, RunRead, ScheduleCreate, ScheduleRead, ScopeCreate, ScopeRead, ServiceRead, UserProvision, UserRead
+from .models import AuditEvent, CurrentExposure, DiscoveryObservation, HostObservation, InventoryScope, Role, ScanProfile, ScanRun, ScanSchedule, ScanShard, ServiceObservation, User
+from .schemas import AuditEventRead, DiscoveryResultRead, ExposureDiffRead, ExposureRead, ExposureSummary, HostRead, ProfileCreate, ProfileRead, RunCreate, RunRead, ScheduleCreate, ScheduleRead, ScopeCreate, ScopeRead, ServiceRead, UserProvision, UserRead
 from .services import audit, cancel_run, create_run, exposure_diff, parse_approved_cidr
 
 
@@ -322,8 +322,8 @@ def export_exposures(format: str = "csv", scope_id: str | None = None, host: str
 
 @app.get("/v1/exposure-diffs", response_model=ExposureDiffRead)
 def get_exposure_diff(scope_id: str, profile_id: str, session: Session = Depends(get_session), _: User = Depends(current_user)):
-    current, previous, changes = exposure_diff(session, scope_id, profile_id)
-    return ExposureDiffRead(current_run_id=current.id if current else None, previous_run_id=previous.id if previous else None, changes=changes)
+    current, previous, changes, coverage_complete = exposure_diff(session, scope_id, profile_id)
+    return ExposureDiffRead(current_run_id=current.id if current else None, previous_run_id=previous.id if previous else None, coverage_complete=coverage_complete, coverage_note=None if coverage_complete else "Masscan discovery coverage was incomplete; changes are withheld to avoid false closures.", changes=changes)
 
 
 @app.get("/v1/exposures/summary", response_model=ExposureSummary)
@@ -339,6 +339,15 @@ def get_run_hosts(run_id: str, limit: int = 100, offset: int = 0, session: Sessi
     limit = min(max(limit, 1), 500)
     hosts = session.query(HostObservation).filter_by(run_id=run_id).order_by(HostObservation.address).offset(offset).limit(limit).all()
     return [HostRead(id=host.id, address=host.address, state=host.state, hostname=host.hostname, services=[ServiceRead.model_validate(item) for item in session.query(ServiceObservation).filter_by(host_observation_id=host.id).order_by(ServiceObservation.port).all()]) for host in hosts]
+
+
+@app.get("/v1/scan-runs/{run_id}/masscan-results", response_model=list[DiscoveryResultRead])
+def get_masscan_results(run_id: str, limit: int = 100, offset: int = 0, session: Session = Depends(get_session), _: User = Depends(current_user)):
+    if not session.get(ScanRun, run_id):
+        raise HTTPException(status_code=404, detail="run not found")
+    limit = min(max(limit, 1), 500)
+    rows = session.query(DiscoveryObservation, ScanShard).join(ScanShard, ScanShard.id == DiscoveryObservation.shard_id).filter(DiscoveryObservation.run_id == run_id).order_by(DiscoveryObservation.address, DiscoveryObservation.port).offset(max(offset, 0)).limit(limit).all()
+    return [DiscoveryResultRead(shard_id=item.shard_id, cidr=shard.cidr, address=item.address, protocol=item.protocol, port=item.port) for item, shard in rows]
 
 
 @app.post("/v1/scan-runs/{run_id}/cancel", response_model=RunRead)

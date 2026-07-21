@@ -1,7 +1,8 @@
 FROM python:3.12-slim
 WORKDIR /app
 ENV PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1
-RUN apt-get update && apt-get install --no-install-recommends -y nmap && rm -rf /var/lib/apt/lists/* \
+RUN apt-get update && apt-get install --no-install-recommends -y libcap2-bin masscan nmap && rm -rf /var/lib/apt/lists/* \
+    && setcap cap_net_raw+ep /usr/bin/masscan \
     && useradd --create-home --uid 10001 scanpod
 COPY pyproject.toml ./
 RUN pip install --no-cache-dir .

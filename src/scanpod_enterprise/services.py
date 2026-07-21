@@ -151,14 +151,21 @@ def materialize_current_exposures(session: Session, run: ScanRun) -> int:
     return len(rows)
 
 
-def exposure_diff(session: Session, scope_id: str, profile_id: str) -> tuple[ScanRun | None, ScanRun | None, list[dict]]:
+def exposure_diff(session: Session, scope_id: str, profile_id: str) -> tuple[ScanRun | None, ScanRun | None, list[dict], bool]:
     """Compare the two most recent completed observations for a scope/profile."""
     runs = (session.query(ScanRun).filter_by(
         inventory_scope_id=scope_id, profile_id=profile_id, status=RunStatus.completed,
     ).order_by(ScanRun.completed_at.desc()).limit(2).all())
     if not runs:
-        return None, None, []
+        return None, None, [], True
     current, previous = runs[0], runs[1] if len(runs) == 2 else None
+    incomplete_discovery = session.query(ScanShard).filter(
+        ScanShard.run_id == current.id,
+        ScanShard.discovery_artifact_key.is_not(None),
+        ScanShard.artifact_key.is_(None),
+    ).first()
+    if incomplete_discovery:
+        return current, previous, [], False
 
     def observations(run: ScanRun) -> tuple[dict[tuple[str, str, int], ServiceObservation], set[str]]:
         items = {
@@ -176,7 +183,7 @@ def exposure_diff(session: Session, scope_id: str, profile_id: str) -> tuple[Sca
             {"change_type": "port_opened", "address": address, "protocol": protocol, "port": port,
              "service": item.service, "product": item.product, "version": item.version}
             for (address, protocol, port), item in sorted(current_items.items())
-        ]
+        ], True
 
     previous_items, previous_hosts = observations(previous)
     changes: list[dict] = []
@@ -200,7 +207,7 @@ def exposure_diff(session: Session, scope_id: str, profile_id: str) -> tuple[Sca
             changes.append({"change_type": "service_changed", "address": address, "protocol": protocol, "port": port,
                             "service": item.service, "product": item.product, "version": item.version,
                             "previous_service": old.service, "previous_product": old.product, "previous_version": old.version})
-    return current, previous, changes
+    return current, previous, changes, True
 
 
 def backfill_current_exposures(session: Session) -> int:

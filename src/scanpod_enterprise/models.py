@@ -64,6 +64,7 @@ class ScanProfile(Base):
     ports: Mapped[str] = mapped_column(String(512))
     arguments: Mapped[str] = mapped_column(String(512), default="-sV -n")
     max_rate: Mapped[int] = mapped_column(Integer, default=500)
+    scanner_mode: Mapped[str] = mapped_column(String(32), default="nmap")
     max_concurrent_shards: Mapped[int] = mapped_column(Integer, default=4)
     timeout_seconds: Mapped[int] = mapped_column(Integer, default=1800)
     zone: Mapped[str] = mapped_column(String(64), default="default")
@@ -110,6 +111,7 @@ class ScanShard(Base):
     heartbeat_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True, index=True)
     retry_not_before: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True, index=True)
     artifact_key: Mapped[str | None] = mapped_column(String(512), nullable=True)
+    discovery_artifact_key: Mapped[str | None] = mapped_column(String(512), nullable=True)
     error: Mapped[str | None] = mapped_column(Text, nullable=True)
 
 
@@ -133,6 +135,17 @@ class ServiceObservation(Base):
     service: Mapped[str | None] = mapped_column(String(128), nullable=True)
     product: Mapped[str | None] = mapped_column(String(255), nullable=True)
     version: Mapped[str | None] = mapped_column(String(128), nullable=True)
+
+
+class DiscoveryObservation(Base):
+    __tablename__ = "discovery_observations"
+    __table_args__ = (UniqueConstraint("shard_id", "address", "protocol", "port", name="uq_discovery_observation"),)
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    run_id: Mapped[str] = mapped_column(ForeignKey("scan_runs.id"), index=True)
+    shard_id: Mapped[str] = mapped_column(ForeignKey("scan_shards.id"), index=True)
+    address: Mapped[str] = mapped_column(String(64), index=True)
+    protocol: Mapped[str] = mapped_column(String(8))
+    port: Mapped[int] = mapped_column(Integer)
 
 
 class CurrentExposure(Base):

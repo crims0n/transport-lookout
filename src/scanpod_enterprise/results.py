@@ -9,12 +9,12 @@ from .config import settings
 from .models import HostObservation, ServiceObservation
 
 
-def artifact_key(run_id: str, shard_id: str) -> str:
+def artifact_key(run_id: str, shard_id: str, stage: str = "nmap") -> str:
     """Return a controlled storage key; never derive it from client input."""
-    return f"runs/{run_id}/shards/{shard_id}/nmap.xml"
+    return f"runs/{run_id}/shards/{shard_id}/{stage}.xml"
 
 
-def store_artifact(source: Path, run_id: str, shard_id: str) -> str:
+def store_artifact(source: Path, run_id: str, shard_id: str, stage: str = "nmap") -> str:
     """Persist an XML artifact to the configured durable storage backend.
 
     Filesystem storage remains the development default.  Production can select
@@ -22,7 +22,7 @@ def store_artifact(source: Path, run_id: str, shard_id: str) -> str:
     execution flow.  Credentials use the standard boto3 provider chain, so no
     cloud secret is stored in application configuration.
     """
-    key = artifact_key(run_id, shard_id)
+    key = artifact_key(run_id, shard_id, stage)
     if settings.artifact_backend == "filesystem":
         destination = Path(settings.artifact_root) / key
         destination.parent.mkdir(parents=True, exist_ok=True)
@@ -41,6 +41,25 @@ def store_artifact(source: Path, run_id: str, shard_id: str) -> str:
     object_key = "/".join(part for part in (settings.artifact_s3_prefix.strip("/"), key) if part)
     client.upload_file(str(source), settings.artifact_s3_bucket, object_key, ExtraArgs={"ContentType": "application/xml"})
     return key
+
+
+def masscan_candidates(xml_path: Path) -> list[str]:
+    """Extract unique IPv4 hosts with at least one open TCP Masscan result."""
+    return sorted({address for address, _, _ in masscan_observations(xml_path)})
+
+
+def masscan_observations(xml_path: Path) -> list[tuple[str, str, int]]:
+    """Extract open TCP IPv4 Masscan observations for informational review."""
+    root = ET.parse(xml_path).getroot()
+    observations = []
+    for host in root.findall("host"):
+        address = host.find("address[@addrtype='ipv4']")
+        if address is None:
+            continue
+        for port in host.findall("ports/port[@protocol='tcp']"):
+            if port.find("state[@state='open']") is not None:
+                observations.append((address.attrib["addr"], "tcp", int(port.attrib["portid"])))
+    return sorted(set(observations))
 
 
 def normalize_nmap_xml(session: Session, xml_path: Path, run_id: str, shard_id: str) -> int:

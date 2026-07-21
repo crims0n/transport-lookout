@@ -1,6 +1,7 @@
 from datetime import datetime
+from typing import Literal
 
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 
 from .models import Role, RunStatus, ShardStatus
 
@@ -23,6 +24,7 @@ class ProfileCreate(BaseModel):
     name: str = Field(min_length=3, max_length=120)
     ports: str = Field(pattern=r"^([TU]:)?\d+(-\d+)?(,([TU]:)?\d+(-\d+)?)*$")
     max_rate: int = Field(default=500, ge=1, le=10_000)
+    scanner_mode: Literal["nmap", "masscan_then_nmap"] = "nmap"
     max_concurrent_shards: int = Field(default=4, ge=1, le=128)
     timeout_seconds: int = Field(default=1800, ge=30, le=14_400)
     zone: str = Field(default="default", min_length=1, max_length=64)
@@ -31,6 +33,12 @@ class ProfileCreate(BaseModel):
     @classmethod
     def ports_are_nonempty(cls, value: str) -> str:
         return value.upper()
+
+    @model_validator(mode="after")
+    def masscan_profiles_are_tcp_only(self):
+        if self.scanner_mode == "masscan_then_nmap" and "U:" in self.ports:
+            raise ValueError("masscan discovery profiles support TCP ports only")
+        return self
 
 
 class ProfileRead(ProfileCreate):
@@ -77,6 +85,7 @@ class ShardRead(BaseModel):
     status: ShardStatus
     attempts: int
     artifact_key: str | None
+    discovery_artifact_key: str | None
     error: str | None
 
     model_config = {"from_attributes": True}
@@ -103,6 +112,14 @@ class ServiceRead(BaseModel):
     version: str | None
 
     model_config = {"from_attributes": True}
+
+
+class DiscoveryResultRead(BaseModel):
+    shard_id: str
+    cidr: str
+    address: str
+    protocol: str
+    port: int
 
 
 class HostRead(BaseModel):
@@ -176,4 +193,6 @@ class ExposureChangeRead(BaseModel):
 class ExposureDiffRead(BaseModel):
     current_run_id: str | None
     previous_run_id: str | None
+    coverage_complete: bool
+    coverage_note: str | None = None
     changes: list[ExposureChangeRead]

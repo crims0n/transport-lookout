@@ -8,6 +8,7 @@ Transport Lookout is a policy-governed network exposure platform for security op
 - Approved inventory scopes (including atomic CSV import) and controlled, versioned scan profiles—operators cannot submit arbitrary targets or Nmap arguments
 - Scheduled and on-demand scans, with `/16` networks deterministically sharded into `/24` work units
 - RabbitMQ/Celery workers with bounded concurrency, durable outbox delivery, leases, heartbeats, retry backoff, dead-letter state, and active-scan cancellation
+- Controlled `masscan_then_nmap` profiles for fast TCP discovery followed by Nmap confirmation; only confirmed Nmap observations change inventory state. TCP discovery gaps are treated as incomplete coverage, never as closed services.
 - PostgreSQL-backed run, shard, audit, host, and service history with Alembic migrations
 - Current Exposure Inventory: a deduplicated view of currently observed open host/port combinations, including first- and last-seen times
 - Historical exposure diffs between completed scans: opened and closed ports, disappeared hosts, and changed service fingerprints
@@ -57,6 +58,17 @@ cd ui && npm run build
 
 The exposure comparison reports newly opened and closed ports, hosts that were no longer observed as up, and changes in service/product/version fingerprints.
 
+## Two-stage TCP scanning
+
+Profiles support two controlled scanner modes:
+
+- **Nmap confirmation** — Nmap scans every address in each approved shard, which is the default mode.
+- **Masscan discovery + Nmap** — Masscan performs a TCP-only discovery pass using the profile's approved port list and `max_rate`; Nmap then confirms and enriches only the discovered hosts.
+
+Masscan observations are candidates, not inventory facts. The Run Results panel shows them separately from Nmap-confirmed hosts, along with separate discovery and confirmation artifact keys. Only confirmed Nmap results update Current Exposure Inventory and historical exposure diffs. If any Masscan shard has no candidate to confirm, the run is marked as incomplete for inventory replacement and diff generation so an absent response cannot be interpreted as a closed port or disappeared host.
+
+Use this mode for broad TCP coverage where completion time matters. Keep rates conservative at first and validate packet loss, candidate-to-confirmation ratios, and worker resource usage in an authorized staging zone before increasing the profile rate.
+
 ## Production notes
 
 Production deployments must disable bootstrap access and configure OIDC issuer, audience, and JWKS settings. Deploy the control plane, scheduler, publisher, and workers with the provided Helm chart as a starting point; isolate scanning workers in dedicated network zones and node pools.
@@ -72,10 +84,13 @@ Raw scan XML uses filesystem storage by default, which keeps local Docker Compos
 - `GET /metrics` — Prometheus-compatible application and scanning metrics; restrict access at the ingress or network-policy layer in production
 - `GET /v1/exposures/export?format=csv|json` — filtered current exposure export
 - `GET /v1/exposure-diffs?scope_id=...&profile_id=...` — comparison of the latest two completed runs
+- `GET /v1/scan-runs/{run_id}/masscan-results` — paginated Masscan discovery candidates for a run
 
 ## Deployment maturity
 
 Local Docker Compose is the supported path for development and feature testing. The Helm chart now includes migrations, API, workers, scheduler, publisher, secret references, resource defaults, optional monitoring resources, and an opt-in API NetworkPolicy. Before production, validate it in an isolated staging environment with a limited approved scope and a dedicated worker network zone; large-scope throughput, broker/database failure behavior, artifact retention, and cluster-specific policy settings require that environment.
+
+Masscan workers require `NET_RAW`. The local Compose worker and Helm worker template grant that bounded capability; the container image grants it only to the Masscan executable while the worker process remains non-root.
 
 ## Monitoring integration
 
