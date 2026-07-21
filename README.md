@@ -50,6 +50,21 @@ Transport Lookout currently retains raw artifacts on local worker storage. S3-co
 - `GET /readyz` — PostgreSQL and RabbitMQ readiness
 - `GET /metrics` — Prometheus-compatible application and scanning metrics; restrict access at the ingress or network-policy layer in production
 
+## Monitoring integration
+
+The Helm chart can create a Prometheus Operator `ServiceMonitor`, a `PrometheusRule` alert set, and a Grafana dashboard ConfigMap. Enable them only in a cluster where those CRDs and Grafana dashboard sidecar conventions are installed:
+
+```yaml
+monitoring:
+  enabled: true
+  alerts:
+    enabled: true
+  dashboard:
+    enabled: true
+```
+
+The included alerts cover outbox backlog, stale workers, dead-letter shards, stale runs, and overdue schedules.
+
 ## License
 
 Transport Lookout is licensed under the [GNU General Public License v3.0](LICENSE).

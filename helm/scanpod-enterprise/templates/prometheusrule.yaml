@@ -1,0 +1,43 @@
+{{- if and .Values.monitoring.enabled .Values.monitoring.alerts.enabled }}
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: {{ .Release.Name }}-alerts
+  namespace: {{ .Values.monitoring.namespace }}
+  labels:
+    app.kubernetes.io/name: transport-lookout
+spec:
+  groups:
+    - name: transport-lookout.operations
+      rules:
+        - alert: TransportLookoutOutboxBacklog
+          expr: transport_lookout_outbox_pending > 0
+          for: 5m
+          labels: { severity: warning }
+          annotations:
+            summary: Transport Lookout outbox delivery backlog
+        - alert: TransportLookoutStaleWorker
+          expr: transport_lookout_stale_worker_shards > 0
+          for: 5m
+          labels: { severity: critical }
+          annotations:
+            summary: Transport Lookout worker heartbeat is stale
+        - alert: TransportLookoutDeadLetterShard
+          expr: transport_lookout_shards{status="dead_letter"} > 0
+          for: 1m
+          labels: { severity: critical }
+          annotations:
+            summary: Transport Lookout has dead-letter scan shards
+        - alert: TransportLookoutStaleRun
+          expr: transport_lookout_stale_runs > 0
+          for: 10m
+          labels: { severity: warning }
+          annotations:
+            summary: Transport Lookout scans are running longer than expected
+        - alert: TransportLookoutOverdueSchedule
+          expr: transport_lookout_overdue_schedules > 0
+          for: 10m
+          labels: { severity: warning }
+          annotations:
+            summary: Transport Lookout schedules are overdue
+{{- end }}

@@ -1,0 +1,17 @@
+{
+  "title": "Transport Lookout Operations",
+  "timezone": "browser",
+  "schemaVersion": 39,
+  "version": 1,
+  "panels": [
+    {"type":"stat","title":"Running runs","targets":[{"expr":"transport_lookout_runs{status=\"running\"}"}],"gridPos":{"h":6,"w":6,"x":0,"y":0}},
+    {"type":"stat","title":"Queued shards","targets":[{"expr":"transport_lookout_shards{status=\"queued\"}"}],"gridPos":{"h":6,"w":6,"x":6,"y":0}},
+    {"type":"stat","title":"Outbox backlog","targets":[{"expr":"transport_lookout_outbox_pending"}],"gridPos":{"h":6,"w":6,"x":12,"y":0}},
+    {"type":"stat","title":"Dead-letter shards","targets":[{"expr":"transport_lookout_shards{status=\"dead_letter\"}"}],"gridPos":{"h":6,"w":6,"x":18,"y":0}},
+    {"type":"timeseries","title":"API request rate","targets":[{"expr":"sum(rate(transport_lookout_api_requests_total[5m])) by (status)"}],"gridPos":{"h":8,"w":12,"x":0,"y":6}},
+    {"type":"timeseries","title":"API p95 latency","targets":[{"expr":"histogram_quantile(0.95, sum(rate(transport_lookout_api_request_duration_seconds_bucket[5m])) by (le))"}],"gridPos":{"h":8,"w":12,"x":12,"y":6}},
+    {"type":"timeseries","title":"Current exposures","targets":[{"expr":"transport_lookout_current_exposures"}],"gridPos":{"h":8,"w":12,"x":0,"y":14}},
+    {"type":"stat","title":"Stale worker shards","targets":[{"expr":"transport_lookout_stale_worker_shards"}],"gridPos":{"h":8,"w":6,"x":12,"y":14}},
+    {"type":"stat","title":"Overdue schedules","targets":[{"expr":"transport_lookout_overdue_schedules"}],"gridPos":{"h":8,"w":6,"x":18,"y":14}}
+  ]
+}

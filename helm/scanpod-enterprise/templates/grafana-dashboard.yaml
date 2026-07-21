@@ -1,0 +1,13 @@
+{{- if and .Values.monitoring.enabled .Values.monitoring.dashboard.enabled }}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ .Release.Name }}-dashboard
+  namespace: {{ .Values.monitoring.namespace }}
+  labels:
+    grafana_dashboard: "1"
+    app.kubernetes.io/name: transport-lookout
+data:
+  transport-lookout-overview.json: |-
+{{ .Files.Get "dashboards/overview.json" | indent 4 }}
+{{- end }}

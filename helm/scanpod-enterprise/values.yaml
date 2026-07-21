@@ -11,3 +11,11 @@ env:
   amqpUrl: ""
   bootstrapEnabled: "false"
 nodeSelector: {}
+monitoring:
+  enabled: false
+  namespace: monitoring
+  scrapeInterval: 30s
+  alerts:
+    enabled: false
+  dashboard:
+    enabled: false
