@@ -7,3 +7,8 @@ export async function api(path, options = {}) {
   if (!response.ok) throw new Error(body?.detail || `Request failed (${response.status})`);
   return body;
 }
+export async function download(path, filename) {
+  const response = await fetch(`${config.baseUrl}${path}`, { headers: { Authorization: `Bearer ${config.token}` } });
+  if (!response.ok) { const body = await response.json().catch(() => null); throw new Error(body?.detail || `Request failed (${response.status})`); }
+  const url = URL.createObjectURL(await response.blob()); const link = document.createElement('a'); link.href = url; link.download = filename; link.click(); URL.revokeObjectURL(url);
+}

@@ -5,12 +5,14 @@ Transport Lookout is a policy-governed network exposure platform for security op
 ## Current capabilities
 
 - OIDC authentication, role-based access control, and local development bootstrap access
-- Approved inventory scopes and controlled, versioned scan profiles—operators cannot submit arbitrary targets or Nmap arguments
+- Approved inventory scopes (including atomic CSV import) and controlled, versioned scan profiles—operators cannot submit arbitrary targets or Nmap arguments
 - Scheduled and on-demand scans, with `/16` networks deterministically sharded into `/24` work units
 - RabbitMQ/Celery workers with bounded concurrency, durable outbox delivery, leases, heartbeats, retry backoff, dead-letter state, and active-scan cancellation
 - PostgreSQL-backed run, shard, audit, host, and service history with Alembic migrations
 - Current Exposure Inventory: a deduplicated view of currently observed open host/port combinations, including first- and last-seen times
-- React Operator Console for inventory approval, profiles, schedules, runs, result review, audit events, and exposure filtering
+- Historical exposure diffs between completed scans: opened and closed ports, disappeared hosts, and changed service fingerprints
+- Filtered current-exposure exports in CSV or JSON
+- React Operator Console for CSV inventory import and approval, profiles, schedules, runs, result review, audit events, exposure filtering, exports, and change review
 
 ## Local development
 
@@ -38,6 +40,23 @@ npm run dev
 
 Connect the console to `http://localhost:8080` with the configured bearer token. The console supports current exposure filters by scope, host, port, and service.
 
+Run the fast checks while developing:
+
+```sh
+ruff check .
+pytest -q
+cd ui && npm run build
+```
+
+## Operator workflow
+
+1. Add a scope manually or import a UTF-8 CSV with `name,cidr,zone` columns. `zone` is optional and defaults to `default`.
+2. Review and approve each inventory scope. CSV imports are atomic and create only pending scopes.
+3. Create a controlled scan profile, then start an on-demand run or attach the scope/profile pair to a schedule.
+4. Review run hosts and shard outcomes. Use Exposure Inventory to filter the current perimeter, export the filtered view as CSV/JSON, or compare the latest two completed runs for a scope/profile.
+
+The exposure comparison reports newly opened and closed ports, hosts that were no longer observed as up, and changes in service/product/version fingerprints.
+
 ## Production notes
 
 Production deployments must disable bootstrap access and configure OIDC issuer, audience, and JWKS settings. Deploy the control plane, scheduler, publisher, and workers with the provided Helm chart as a starting point; isolate scanning workers in dedicated network zones and node pools.
@@ -51,6 +70,12 @@ Raw scan XML uses filesystem storage by default, which keeps local Docker Compos
 - `GET /healthz` — process liveness
 - `GET /readyz` — PostgreSQL and RabbitMQ readiness
 - `GET /metrics` — Prometheus-compatible application and scanning metrics; restrict access at the ingress or network-policy layer in production
+- `GET /v1/exposures/export?format=csv|json` — filtered current exposure export
+- `GET /v1/exposure-diffs?scope_id=...&profile_id=...` — comparison of the latest two completed runs
+
+## Deployment maturity
+
+Local Docker Compose is the supported path for development and feature testing. The Helm chart now includes migrations, API, workers, scheduler, publisher, secret references, resource defaults, optional monitoring resources, and an opt-in API NetworkPolicy. Before production, validate it in an isolated staging environment with a limited approved scope and a dedicated worker network zone; large-scope throughput, broker/database failure behavior, artifact retention, and cluster-specific policy settings require that environment.
 
 ## Monitoring integration
 

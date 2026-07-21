@@ -14,6 +14,7 @@ class Settings(BaseSettings):
     max_cidr_prefix: int = 16
     shard_prefix: int = 24
     max_shards_per_run: int = 4096
+    inventory_import_max_rows: int = 1000
     artifact_backend: Literal["filesystem", "s3"] = "filesystem"
     artifact_root: str = "/tmp/scanpod-artifacts"
     artifact_s3_bucket: str = ""

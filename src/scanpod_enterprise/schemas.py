@@ -158,3 +158,22 @@ class ExposureSummary(BaseModel):
     open_services: int
     unique_ports: int
     latest_observation_at: datetime | None
+
+
+class ExposureChangeRead(BaseModel):
+    change_type: str
+    address: str
+    protocol: str | None = None
+    port: int | None = None
+    service: str | None = None
+    product: str | None = None
+    version: str | None = None
+    previous_service: str | None = None
+    previous_product: str | None = None
+    previous_version: str | None = None
+
+
+class ExposureDiffRead(BaseModel):
+    current_run_id: str | None
+    previous_run_id: str | None
+    changes: list[ExposureChangeRead]

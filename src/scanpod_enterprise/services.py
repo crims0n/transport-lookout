@@ -151,6 +151,58 @@ def materialize_current_exposures(session: Session, run: ScanRun) -> int:
     return len(rows)
 
 
+def exposure_diff(session: Session, scope_id: str, profile_id: str) -> tuple[ScanRun | None, ScanRun | None, list[dict]]:
+    """Compare the two most recent completed observations for a scope/profile."""
+    runs = (session.query(ScanRun).filter_by(
+        inventory_scope_id=scope_id, profile_id=profile_id, status=RunStatus.completed,
+    ).order_by(ScanRun.completed_at.desc()).limit(2).all())
+    if not runs:
+        return None, None, []
+    current, previous = runs[0], runs[1] if len(runs) == 2 else None
+
+    def observations(run: ScanRun) -> tuple[dict[tuple[str, str, int], ServiceObservation], set[str]]:
+        items = {
+            (host.address, service.protocol, service.port): service
+            for host, service in session.query(HostObservation, ServiceObservation)
+            .join(ServiceObservation, ServiceObservation.host_observation_id == HostObservation.id)
+            .filter(HostObservation.run_id == run.id, HostObservation.state == "up", ServiceObservation.state == "open")
+        }
+        hosts = {address for (address,) in session.query(HostObservation.address).filter_by(run_id=run.id, state="up")}
+        return items, hosts
+
+    current_items, current_hosts = observations(current)
+    if previous is None:
+        return current, None, [
+            {"change_type": "port_opened", "address": address, "protocol": protocol, "port": port,
+             "service": item.service, "product": item.product, "version": item.version}
+            for (address, protocol, port), item in sorted(current_items.items())
+        ]
+
+    previous_items, previous_hosts = observations(previous)
+    changes: list[dict] = []
+    for address in sorted(previous_hosts - current_hosts):
+        changes.append({"change_type": "host_disappeared", "address": address})
+    for key in sorted(current_items.keys() - previous_items.keys()):
+        address, protocol, port = key
+        item = current_items[key]
+        changes.append({"change_type": "port_opened", "address": address, "protocol": protocol, "port": port,
+                        "service": item.service, "product": item.product, "version": item.version})
+    for key in sorted(previous_items.keys() - current_items.keys()):
+        address, protocol, port = key
+        if address in current_hosts:
+            item = previous_items[key]
+            changes.append({"change_type": "port_closed", "address": address, "protocol": protocol, "port": port,
+                            "previous_service": item.service, "previous_product": item.product, "previous_version": item.version})
+    for key in sorted(current_items.keys() & previous_items.keys()):
+        item, old = current_items[key], previous_items[key]
+        if (item.service, item.product, item.version) != (old.service, old.product, old.version):
+            address, protocol, port = key
+            changes.append({"change_type": "service_changed", "address": address, "protocol": protocol, "port": port,
+                            "service": item.service, "product": item.product, "version": item.version,
+                            "previous_service": old.service, "previous_product": old.product, "previous_version": old.version})
+    return current, previous, changes
+
+
 def backfill_current_exposures(session: Session) -> int:
     """Populate the read model from the latest completed run per scope/profile."""
     seen: set[tuple[str, str]] = set()

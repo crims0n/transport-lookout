@@ -1,12 +1,17 @@
+import csv
+import io
+import json
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone
 import time
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from fastapi import Depends, FastAPI, HTTPException, Request, Response, status
+from fastapi.encoders import jsonable_encoder
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy import func
 from sqlalchemy.orm import Session
+from pydantic import ValidationError
 
 from .auth import current_user, require_roles
 from .config import settings
@@ -14,8 +19,8 @@ from .db import get_session
 from .db import engine
 from .metrics import API_DURATION, API_REQUESTS, render_metrics
 from .models import AuditEvent, CurrentExposure, HostObservation, InventoryScope, Role, ScanProfile, ScanRun, ScanSchedule, ScanShard, ServiceObservation, User
-from .schemas import AuditEventRead, ExposureRead, ExposureSummary, HostRead, ProfileCreate, ProfileRead, RunCreate, RunRead, ScheduleCreate, ScheduleRead, ScopeCreate, ScopeRead, ServiceRead, UserProvision, UserRead
-from .services import audit, cancel_run, create_run, parse_approved_cidr
+from .schemas import AuditEventRead, ExposureDiffRead, ExposureRead, ExposureSummary, HostRead, ProfileCreate, ProfileRead, RunCreate, RunRead, ScheduleCreate, ScheduleRead, ScopeCreate, ScopeRead, ServiceRead, UserProvision, UserRead
+from .services import audit, cancel_run, create_run, exposure_diff, parse_approved_cidr
 
 
 @asynccontextmanager
@@ -100,6 +105,54 @@ def add_scope(payload: ScopeCreate, session: Session = Depends(get_session), use
     session.commit()
     session.refresh(scope)
     return scope
+
+
+@app.post("/v1/inventory/scopes/import", response_model=list[ScopeRead], status_code=status.HTTP_201_CREATED)
+async def import_scopes_csv(request: Request, session: Session = Depends(get_session), user: User = Depends(require_roles(Role.platform_admin, Role.inventory_manager))):
+    """Atomically import pending inventory scopes from a UTF-8 CSV file.
+
+    Required columns are ``name,cidr``; the optional ``zone`` column defaults to
+    ``default``. Imported scopes always require a separate approval action.
+    """
+    try:
+        source = (await request.body()).decode("utf-8-sig")
+        reader = csv.DictReader(io.StringIO(source))
+    except (UnicodeDecodeError, csv.Error) as exc:
+        raise HTTPException(status_code=422, detail="CSV must be UTF-8 encoded with a header row") from exc
+    if not reader.fieldnames or not {"name", "cidr"}.issubset(reader.fieldnames):
+        raise HTTPException(status_code=422, detail="CSV must include name and cidr columns")
+    rows = list(reader)
+    if not rows:
+        raise HTTPException(status_code=422, detail="CSV contains no inventory scopes")
+    if len(rows) > settings.inventory_import_max_rows:
+        raise HTTPException(status_code=422, detail=f"CSV exceeds the {settings.inventory_import_max_rows} row limit")
+
+    candidates: list[ScopeCreate] = []
+    names: set[str] = set()
+    cidrs: set[str] = set()
+    for row_number, row in enumerate(rows, start=2):
+        try:
+            candidate = ScopeCreate(name=(row.get("name") or "").strip(), cidr=(row.get("cidr") or "").strip(), zone=(row.get("zone") or "default").strip() or "default")
+            network = parse_approved_cidr(candidate.cidr)
+        except (ValidationError, HTTPException) as exc:
+            detail = exc.detail if isinstance(exc, HTTPException) else str(exc.errors()[0]["msg"])
+            raise HTTPException(status_code=422, detail=f"CSV row {row_number}: {detail}") from exc
+        candidate.cidr = str(network)
+        if candidate.name in names or candidate.cidr in cidrs:
+            raise HTTPException(status_code=409, detail=f"CSV row {row_number}: duplicate name or CIDR in file")
+        names.add(candidate.name)
+        cidrs.add(candidate.cidr)
+        candidates.append(candidate)
+    if session.query(InventoryScope).filter((InventoryScope.name.in_(names)) | (InventoryScope.cidr.in_(cidrs))).first():
+        raise HTTPException(status_code=409, detail="one or more scope names or CIDRs already exist")
+
+    scopes = [InventoryScope(name=item.name, cidr=item.cidr, zone=item.zone) for item in candidates]
+    session.add_all(scopes)
+    session.flush()
+    for scope in scopes:
+        audit(session, user.subject, "inventory_scope.imported", "inventory_scope", scope.id, cidr=scope.cidr, zone=scope.zone)
+    session.commit()
+    return scopes
 
 
 @app.get("/v1/inventory/scopes", response_model=list[ScopeRead])
@@ -234,8 +287,7 @@ def list_audit_events(limit: int = 100, session: Session = Depends(get_session),
     return session.query(AuditEvent).order_by(AuditEvent.created_at.desc()).limit(min(max(limit, 1), 500)).all()
 
 
-@app.get("/v1/exposures", response_model=list[ExposureRead])
-def list_exposures(scope_id: str | None = None, host: str | None = None, port: int | None = None, service: str | None = None, limit: int = 100, offset: int = 0, session: Session = Depends(get_session), _: User = Depends(current_user)):
+def filtered_exposures(session: Session, scope_id: str | None, host: str | None, port: int | None, service: str | None):
     query = session.query(CurrentExposure)
     if scope_id:
         query = query.filter(CurrentExposure.inventory_scope_id == scope_id)
@@ -245,7 +297,33 @@ def list_exposures(scope_id: str | None = None, host: str | None = None, port: i
         query = query.filter(CurrentExposure.port == port)
     if service:
         query = query.filter(CurrentExposure.service.ilike(f"%{service}%"))
-    return query.order_by(CurrentExposure.address, CurrentExposure.port).offset(max(offset, 0)).limit(min(max(limit, 1), 500)).all()
+    return query.order_by(CurrentExposure.address, CurrentExposure.port)
+
+
+@app.get("/v1/exposures", response_model=list[ExposureRead])
+def list_exposures(scope_id: str | None = None, host: str | None = None, port: int | None = None, service: str | None = None, limit: int = 100, offset: int = 0, session: Session = Depends(get_session), _: User = Depends(current_user)):
+    return filtered_exposures(session, scope_id, host, port, service).offset(max(offset, 0)).limit(min(max(limit, 1), 500)).all()
+
+
+@app.get("/v1/exposures/export")
+def export_exposures(format: str = "csv", scope_id: str | None = None, host: str | None = None, port: int | None = None, service: str | None = None, session: Session = Depends(get_session), _: User = Depends(current_user)):
+    items = filtered_exposures(session, scope_id, host, port, service).limit(10_000).all()
+    rows = [ExposureRead.model_validate(item).model_dump(mode="json") for item in items]
+    if format == "json":
+        return Response(content=json.dumps(jsonable_encoder(rows)), media_type="application/json", headers={"Content-Disposition": "attachment; filename=transport-lookout-exposures.json"})
+    if format != "csv":
+        raise HTTPException(status_code=422, detail="format must be csv or json")
+    output = io.StringIO()
+    writer = csv.DictWriter(output, fieldnames=list(ExposureRead.model_fields))
+    writer.writeheader()
+    writer.writerows(rows)
+    return Response(content=output.getvalue(), media_type="text/csv", headers={"Content-Disposition": "attachment; filename=transport-lookout-exposures.csv"})
+
+
+@app.get("/v1/exposure-diffs", response_model=ExposureDiffRead)
+def get_exposure_diff(scope_id: str, profile_id: str, session: Session = Depends(get_session), _: User = Depends(current_user)):
+    current, previous, changes = exposure_diff(session, scope_id, profile_id)
+    return ExposureDiffRead(current_run_id=current.id if current else None, previous_run_id=previous.id if previous else None, changes=changes)
 
 
 @app.get("/v1/exposures/summary", response_model=ExposureSummary)

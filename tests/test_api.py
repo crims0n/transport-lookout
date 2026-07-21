@@ -64,6 +64,26 @@ def test_unreferenced_scope_and_profile_can_be_deleted(client, auth_headers):
     assert client.delete(f"/v1/scan-profiles/{profile['id']}", headers=auth_headers).status_code == 204
 
 
+def test_csv_import_creates_pending_scopes_atomically(client, auth_headers):
+    response = client.post(
+        "/v1/inventory/scopes/import",
+        headers={**auth_headers, "Content-Type": "text/csv"},
+        content="name,cidr,zone\nbranch-a,10.62.0.0/24,default\nbranch-b,10.62.1.0/24,isolated\n",
+    )
+    assert response.status_code == 201
+    assert [(scope["name"], scope["approved"], scope["zone"]) for scope in response.json()] == [
+        ("branch-a", False, "default"), ("branch-b", False, "isolated"),
+    ]
+
+    invalid = client.post(
+        "/v1/inventory/scopes/import",
+        headers={**auth_headers, "Content-Type": "text/csv"},
+        content="name,cidr\nvalid-row,10.63.0.0/24\nbad-row,10.63.0.1/24\n",
+    )
+    assert invalid.status_code == 422
+    assert [item["name"] for item in client.get("/v1/inventory/scopes", headers=auth_headers).json()] == ["branch-a", "branch-b"]
+
+
 def test_referenced_scope_cannot_be_deleted(client, auth_headers, monkeypatch):
     monkeypatch.setattr(celery, "send_task", lambda *_, **__: None)
     scope = create_scope(client, auth_headers, "10.61.0.0/24")
