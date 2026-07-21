@@ -1,3 +1,5 @@
+from typing import Literal
+
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -12,7 +14,12 @@ class Settings(BaseSettings):
     max_cidr_prefix: int = 16
     shard_prefix: int = 24
     max_shards_per_run: int = 4096
+    artifact_backend: Literal["filesystem", "s3"] = "filesystem"
     artifact_root: str = "/tmp/scanpod-artifacts"
+    artifact_s3_bucket: str = ""
+    artifact_s3_prefix: str = "transport-lookout"
+    artifact_s3_region: str = ""
+    artifact_s3_endpoint_url: str = ""
     oidc_issuer: str = ""
     oidc_audience: str = ""
     oidc_jwks_url: str = ""

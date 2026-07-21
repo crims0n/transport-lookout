@@ -17,6 +17,7 @@ dependencies = [
   "pyjwt[crypto]>=2.9,<3",
   "alembic>=1.13,<2",
   "prometheus-client>=0.21,<1",
+  "boto3>=1.35,<2",
 ]
 
 [project.optional-dependencies]

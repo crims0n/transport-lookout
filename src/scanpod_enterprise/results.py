@@ -9,17 +9,38 @@ from .config import settings
 from .models import HostObservation, ServiceObservation
 
 
-def store_artifact(source: Path, run_id: str, shard_id: str) -> str:
-    """Persist a raw XML artifact beneath the configured storage root.
+def artifact_key(run_id: str, shard_id: str) -> str:
+    """Return a controlled storage key; never derive it from client input."""
+    return f"runs/{run_id}/shards/{shard_id}/nmap.xml"
 
-    The path is an internal key, deliberately not a client-provided filename.
-    A future S3-compatible implementation can preserve this interface.
+
+def store_artifact(source: Path, run_id: str, shard_id: str) -> str:
+    """Persist an XML artifact to the configured durable storage backend.
+
+    Filesystem storage remains the development default.  Production can select
+    an S3-compatible bucket without changing the database key format or worker
+    execution flow.  Credentials use the standard boto3 provider chain, so no
+    cloud secret is stored in application configuration.
     """
-    relative = Path(run_id) / f"{shard_id}.xml"
-    destination = Path(settings.artifact_root) / relative
-    destination.parent.mkdir(parents=True, exist_ok=True)
-    shutil.move(str(source), destination)
-    return str(relative)
+    key = artifact_key(run_id, shard_id)
+    if settings.artifact_backend == "filesystem":
+        destination = Path(settings.artifact_root) / key
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        shutil.move(str(source), destination)
+        return key
+
+    if not settings.artifact_s3_bucket:
+        raise RuntimeError("SCANPOD_ARTIFACT_S3_BUCKET is required when artifact backend is s3")
+    import boto3
+
+    client = boto3.client(
+        "s3",
+        region_name=settings.artifact_s3_region or None,
+        endpoint_url=settings.artifact_s3_endpoint_url or None,
+    )
+    object_key = "/".join(part for part in (settings.artifact_s3_prefix.strip("/"), key) if part)
+    client.upload_file(str(source), settings.artifact_s3_bucket, object_key, ExtraArgs={"ContentType": "application/xml"})
+    return key
 
 
 def normalize_nmap_xml(session: Session, xml_path: Path, run_id: str, shard_id: str) -> int:

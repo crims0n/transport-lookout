@@ -42,7 +42,7 @@ Connect the console to `http://localhost:8080` with the configured bearer token.
 
 Production deployments must disable bootstrap access and configure OIDC issuer, audience, and JWKS settings. Deploy the control plane, scheduler, publisher, and workers with the provided Helm chart as a starting point; isolate scanning workers in dedicated network zones and node pools.
 
-Transport Lookout currently retains raw artifacts on local worker storage. S3-compatible artifact storage, operational metrics/dashboards, and scale validation remain the next production-hardening milestones.
+Raw scan XML uses filesystem storage by default, which keeps local Docker Compose testing self-contained. For durable production storage set `SCANPOD_ARTIFACT_BACKEND=s3` and provide `SCANPOD_ARTIFACT_S3_BUCKET`; optionally configure `SCANPOD_ARTIFACT_S3_PREFIX`, `SCANPOD_ARTIFACT_S3_REGION`, and `SCANPOD_ARTIFACT_S3_ENDPOINT_URL` for an S3-compatible service. Credentials come from the worker's standard AWS SDK credential chain.
 
 ## Operations endpoints
 
