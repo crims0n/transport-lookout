@@ -37,7 +37,7 @@ flowchart LR
   workerA --> artifacts[(S3-compatible artifact storage)]
   workerB --> artifacts
 
-  api --> metrics[/metrics]
+  api --> metrics["/metrics"]
   metrics --> prometheus[Prometheus]
   prometheus --> alerts[Alertmanager]
   prometheus --> grafana[Grafana]
