@@ -2,6 +2,8 @@
 
 Transport Lookout is a policy-governed network exposure platform for security operations teams. It runs in customer-managed infrastructure, schedules only authorized scans, and turns Nmap output into a current inventory of open hosts and services.
 
+See the [production architecture diagram](docs/architecture.md) for the control plane, scan-zone workers, artifact storage, and monitoring topology.
+
 ## Current capabilities
 
 - OIDC authentication, role-based access control, and local development bootstrap access
