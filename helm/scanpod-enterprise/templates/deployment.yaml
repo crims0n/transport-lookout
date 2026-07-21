@@ -20,5 +20,5 @@ spec:
             - { name: SCANPOD_DATABASE_URL, value: {{ .Values.env.databaseUrl | quote }} }
             - { name: SCANPOD_AMQP_URL, value: {{ .Values.env.amqpUrl | quote }} }
             - { name: SCANPOD_BOOTSTRAP_ENABLED, value: {{ .Values.env.bootstrapEnabled | quote }} }
-          readinessProbe: { httpGet: { path: /healthz, port: 8080 } }
-
+          livenessProbe: { httpGet: { path: /healthz, port: 8080 } }
+          readinessProbe: { httpGet: { path: /readyz, port: 8080 } }

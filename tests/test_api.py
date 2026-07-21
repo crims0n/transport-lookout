@@ -40,6 +40,13 @@ def test_bootstrap_authentication_is_required(client):
     assert client.get("/v1/me", headers={"X-Forwarded-User": "bootstrap-admin"}).status_code == 401
 
 
+def test_liveness_and_metrics_are_available(client):
+    assert client.get("/healthz").json() == {"status": "ok"}
+    response = client.get("/metrics")
+    assert response.status_code == 200
+    assert "transport_lookout_api_requests_total" in response.text
+
+
 def test_admin_can_provision_an_oidc_subject(client, auth_headers):
     response = client.put(
         "/v1/users/alice@example.com",

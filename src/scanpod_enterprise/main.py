@@ -1,8 +1,9 @@
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone
+import time
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
-from fastapi import Depends, FastAPI, HTTPException, status
+from fastapi import Depends, FastAPI, HTTPException, Request, Response, status
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy import func
 from sqlalchemy.orm import Session
@@ -10,6 +11,8 @@ from sqlalchemy.orm import Session
 from .auth import current_user, require_roles
 from .config import settings
 from .db import get_session
+from .db import engine
+from .metrics import API_DURATION, API_REQUESTS, render_metrics
 from .models import AuditEvent, CurrentExposure, HostObservation, InventoryScope, Role, ScanProfile, ScanRun, ScanSchedule, ScanShard, ServiceObservation, User
 from .schemas import AuditEventRead, ExposureRead, ExposureSummary, HostRead, ProfileCreate, ProfileRead, RunCreate, RunRead, ScheduleCreate, ScheduleRead, ScopeCreate, ScopeRead, ServiceRead, UserProvision, UserRead
 from .services import audit, cancel_run, create_run, parse_approved_cidr
@@ -25,9 +28,38 @@ if settings.cors_origins:
     app.add_middleware(CORSMiddleware, allow_origins=settings.cors_origins.split(","), allow_credentials=True, allow_methods=["GET", "POST"], allow_headers=["Authorization", "Content-Type"])
 
 
+@app.middleware("http")
+async def observe_request(request: Request, call_next):
+    started = time.perf_counter()
+    response = await call_next(request)
+    route = getattr(request.scope.get("route"), "path", request.url.path)
+    API_REQUESTS.labels(method=request.method, route=route, status=response.status_code).inc()
+    API_DURATION.labels(method=request.method, route=route).observe(time.perf_counter() - started)
+    return response
+
+
 @app.get("/healthz")
 def healthz():
     return {"status": "ok"}
+
+
+@app.get("/readyz")
+def readyz():
+    try:
+        with engine.connect() as connection:
+            connection.exec_driver_sql("SELECT 1")
+        from .worker import celery
+        with celery.connection_for_read() as connection:
+            connection.ensure_connection(max_retries=0)
+    except Exception as exc:
+        raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="dependency unavailable") from exc
+    return {"status": "ready"}
+
+
+@app.get("/metrics", include_in_schema=False)
+def metrics(session: Session = Depends(get_session)):
+    body, media_type = render_metrics(session)
+    return Response(content=body, media_type=media_type)
 
 
 @app.get("/v1/me", response_model=UserRead)

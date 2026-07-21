@@ -44,6 +44,12 @@ Production deployments must disable bootstrap access and configure OIDC issuer, 
 
 Transport Lookout currently retains raw artifacts on local worker storage. S3-compatible artifact storage, operational metrics/dashboards, and scale validation remain the next production-hardening milestones.
 
+## Operations endpoints
+
+- `GET /healthz` — process liveness
+- `GET /readyz` — PostgreSQL and RabbitMQ readiness
+- `GET /metrics` — Prometheus-compatible application and scanning metrics; restrict access at the ingress or network-policy layer in production
+
 ## License
 
 Transport Lookout is licensed under the [GNU General Public License v3.0](LICENSE).

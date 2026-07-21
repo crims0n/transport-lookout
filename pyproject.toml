@@ -16,6 +16,7 @@ dependencies = [
   "celery>=5.4,<6",
   "pyjwt[crypto]>=2.9,<3",
   "alembic>=1.13,<2",
+  "prometheus-client>=0.21,<1",
 ]
 
 [project.optional-dependencies]
