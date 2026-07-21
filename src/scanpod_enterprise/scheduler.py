@@ -3,7 +3,7 @@ import time
 from datetime import datetime, timedelta, timezone
 from .db import SessionLocal
 from .models import InventoryScope, RunStatus, ScanProfile, ScanRun, ScanSchedule, ScanShard, ShardStatus
-from .services import audit, create_run, dispatch_available_shards, publish_pending_outbox, recover_expired_leases
+from .services import audit, create_run, dispatch_available_shards, publish_pending_outbox, reconcile_terminal_runs, recover_expired_leases
 
 
 def dispatch_ready_runs(now: datetime | None = None) -> int:
@@ -50,6 +50,7 @@ def main() -> None:
         with SessionLocal() as session:
             recover_expired_leases(session)
             publish_pending_outbox(session)
+            reconcile_terminal_runs(session)
         dispatch_ready_runs()
         dispatch_due_schedules()
         time.sleep(30)

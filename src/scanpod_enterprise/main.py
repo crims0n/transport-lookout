@@ -9,8 +9,8 @@ from sqlalchemy.orm import Session
 from .auth import current_user, require_roles
 from .config import settings
 from .db import get_session
-from .models import HostObservation, InventoryScope, Role, ScanProfile, ScanRun, ScanSchedule, ScanShard, ServiceObservation, User
-from .schemas import HostRead, ProfileCreate, ProfileRead, RunCreate, RunRead, ScheduleCreate, ScheduleRead, ScopeCreate, ScopeRead, ServiceRead, UserProvision, UserRead
+from .models import AuditEvent, HostObservation, InventoryScope, Role, ScanProfile, ScanRun, ScanSchedule, ScanShard, ServiceObservation, User
+from .schemas import AuditEventRead, HostRead, ProfileCreate, ProfileRead, RunCreate, RunRead, ScheduleCreate, ScheduleRead, ScopeCreate, ScopeRead, ServiceRead, UserProvision, UserRead
 from .services import audit, cancel_run, create_run, parse_approved_cidr
 
 
@@ -159,6 +159,18 @@ def get_run(run_id: str, session: Session = Depends(get_session), _: User = Depe
     if not run:
         raise HTTPException(status_code=404, detail="run not found")
     return to_run_read(session, run)
+
+
+@app.get("/v1/scan-runs", response_model=list[RunRead])
+def list_runs(limit: int = 50, session: Session = Depends(get_session), _: User = Depends(current_user)):
+    limit = min(max(limit, 1), 200)
+    runs = session.query(ScanRun).order_by(ScanRun.created_at.desc()).limit(limit).all()
+    return [to_run_read(session, run) for run in runs]
+
+
+@app.get("/v1/audit-events", response_model=list[AuditEventRead])
+def list_audit_events(limit: int = 100, session: Session = Depends(get_session), _: User = Depends(require_roles(Role.platform_admin, Role.auditor))):
+    return session.query(AuditEvent).order_by(AuditEvent.created_at.desc()).limit(min(max(limit, 1), 500)).all()
 
 
 @app.get("/v1/scan-runs/{run_id}/hosts", response_model=list[HostRead])

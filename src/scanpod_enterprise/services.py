@@ -115,6 +115,25 @@ def recover_expired_leases(session: Session, now: datetime | None = None) -> int
     return len(stale)
 
 
+def reconcile_terminal_runs(session: Session) -> int:
+    """Finalize parent runs from durable shard state, independent of worker exit timing."""
+    reconciled = 0
+    terminal = {ShardStatus.completed, ShardStatus.failed, ShardStatus.cancelled, ShardStatus.dead_letter}
+    runs = session.query(ScanRun).filter(ScanRun.status.in_([RunStatus.queued, RunStatus.running])).all()
+    for run in runs:
+        shards = session.query(ScanShard).filter_by(run_id=run.id).all()
+        if not shards or any(shard.status not in terminal for shard in shards):
+            continue
+        failed = any(shard.status in {ShardStatus.failed, ShardStatus.dead_letter} for shard in shards)
+        run.status = RunStatus.failed if failed else RunStatus.completed
+        run.completed_at = datetime.now(timezone.utc)
+        audit(session, "scheduler", "run.reconciled", "scan_run", run.id, terminal_shards=len(shards))
+        reconciled += 1
+    if reconciled:
+        session.commit()
+    return reconciled
+
+
 def cancel_run(session: Session, run: ScanRun, actor: str) -> ScanRun:
     if run.status in (RunStatus.completed, RunStatus.failed, RunStatus.cancelled):
         raise HTTPException(status_code=409, detail="run is already terminal")

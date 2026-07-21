@@ -121,3 +121,15 @@ class UserRead(BaseModel):
 class UserProvision(BaseModel):
     subject: str = Field(min_length=1, max_length=255)
     role: Role
+
+
+class AuditEventRead(BaseModel):
+    id: str
+    actor: str
+    action: str
+    resource_type: str
+    resource_id: str
+    detail: dict
+    created_at: datetime
+
+    model_config = {"from_attributes": True}
