@@ -25,7 +25,7 @@ async def lifespan(_: FastAPI):
 
 app = FastAPI(title="Transport Lookout API", version="0.1.0", lifespan=lifespan)
 if settings.cors_origins:
-    app.add_middleware(CORSMiddleware, allow_origins=settings.cors_origins.split(","), allow_credentials=True, allow_methods=["GET", "POST"], allow_headers=["Authorization", "Content-Type"])
+    app.add_middleware(CORSMiddleware, allow_origins=settings.cors_origins.split(","), allow_credentials=True, allow_methods=["GET", "POST", "DELETE"], allow_headers=["Authorization", "Content-Type"])
 
 
 @app.middleware("http")
@@ -118,6 +118,20 @@ def approve_scope(scope_id: str, session: Session = Depends(get_session), user: 
     return scope
 
 
+@app.delete("/v1/inventory/scopes/{scope_id}", status_code=status.HTTP_204_NO_CONTENT)
+def delete_scope(scope_id: str, session: Session = Depends(get_session), user: User = Depends(require_roles(Role.platform_admin, Role.inventory_manager))):
+    scope = session.get(InventoryScope, scope_id)
+    if not scope:
+        raise HTTPException(status_code=404, detail="scope not found")
+    has_runs = session.query(ScanRun).filter_by(inventory_scope_id=scope.id).first()
+    has_schedules = session.query(ScanSchedule).filter_by(inventory_scope_id=scope.id).first()
+    if has_runs or has_schedules:
+        raise HTTPException(status_code=409, detail="scope cannot be deleted while runs or schedules reference it")
+    audit(session, user.subject, "inventory_scope.deleted", "inventory_scope", scope.id, name=scope.name, cidr=scope.cidr)
+    session.delete(scope)
+    session.commit()
+
+
 @app.post("/v1/scan-profiles", response_model=ProfileRead, status_code=status.HTTP_201_CREATED)
 def add_profile(payload: ProfileCreate, session: Session = Depends(get_session), user: User = Depends(require_roles(Role.platform_admin))):
     latest = session.query(ScanProfile).filter_by(name=payload.name).order_by(ScanProfile.version.desc()).first()
@@ -132,6 +146,20 @@ def add_profile(payload: ProfileCreate, session: Session = Depends(get_session),
 @app.get("/v1/scan-profiles", response_model=list[ProfileRead])
 def list_profiles(session: Session = Depends(get_session), _: User = Depends(current_user)):
     return session.query(ScanProfile).order_by(ScanProfile.name, ScanProfile.version.desc()).all()
+
+
+@app.delete("/v1/scan-profiles/{profile_id}", status_code=status.HTTP_204_NO_CONTENT)
+def delete_profile(profile_id: str, session: Session = Depends(get_session), user: User = Depends(require_roles(Role.platform_admin))):
+    profile = session.get(ScanProfile, profile_id)
+    if not profile:
+        raise HTTPException(status_code=404, detail="profile not found")
+    has_runs = session.query(ScanRun).filter_by(profile_id=profile.id).first()
+    has_schedules = session.query(ScanSchedule).filter_by(profile_id=profile.id).first()
+    if has_runs or has_schedules:
+        raise HTTPException(status_code=409, detail="profile cannot be deleted while runs or schedules reference it")
+    audit(session, user.subject, "scan_profile.deleted", "scan_profile", profile.id, name=profile.name, version=profile.version)
+    session.delete(profile)
+    session.commit()
 
 
 @app.post("/v1/schedules", response_model=ScheduleRead, status_code=status.HTTP_201_CREATED)

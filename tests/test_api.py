@@ -57,6 +57,23 @@ def test_admin_can_provision_an_oidc_subject(client, auth_headers):
     assert response.json() == {"subject": "alice@example.com", "role": "scan_operator"}
 
 
+def test_unreferenced_scope_and_profile_can_be_deleted(client, auth_headers):
+    scope = create_scope(client, auth_headers, "10.60.0.0/24")
+    profile = create_profile(client, auth_headers)
+    assert client.delete(f"/v1/inventory/scopes/{scope['id']}", headers=auth_headers).status_code == 204
+    assert client.delete(f"/v1/scan-profiles/{profile['id']}", headers=auth_headers).status_code == 204
+
+
+def test_referenced_scope_cannot_be_deleted(client, auth_headers, monkeypatch):
+    monkeypatch.setattr(celery, "send_task", lambda *_, **__: None)
+    scope = create_scope(client, auth_headers, "10.61.0.0/24")
+    approve_scope(client, auth_headers, scope["id"])
+    profile = create_profile(client, auth_headers)
+    client.post("/v1/scan-runs", headers=auth_headers, json={"inventory_scope_id": scope["id"], "profile_id": profile["id"]})
+    response = client.delete(f"/v1/inventory/scopes/{scope['id']}", headers=auth_headers)
+    assert response.status_code == 409
+
+
 def test_scope_cannot_be_run_until_approved(client, auth_headers):
     scope = create_scope(client, auth_headers)
     profile = create_profile(client, auth_headers)
