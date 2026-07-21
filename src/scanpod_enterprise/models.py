@@ -135,6 +135,24 @@ class ServiceObservation(Base):
     version: Mapped[str | None] = mapped_column(String(128), nullable=True)
 
 
+class CurrentExposure(Base):
+    __tablename__ = "current_exposures"
+    __table_args__ = (UniqueConstraint("inventory_scope_id", "profile_id", "address", "protocol", "port", name="uq_current_exposure"),)
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    inventory_scope_id: Mapped[str] = mapped_column(ForeignKey("inventory_scopes.id"), index=True)
+    profile_id: Mapped[str] = mapped_column(ForeignKey("scan_profiles.id"), index=True)
+    latest_run_id: Mapped[str] = mapped_column(ForeignKey("scan_runs.id"), index=True)
+    zone: Mapped[str] = mapped_column(String(64), index=True)
+    address: Mapped[str] = mapped_column(String(64), index=True)
+    protocol: Mapped[str] = mapped_column(String(8))
+    port: Mapped[int] = mapped_column(Integer, index=True)
+    service: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    product: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    version: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    first_seen_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now)
+    last_seen_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now, index=True)
+
+
 class AuditEvent(Base):
     __tablename__ = "audit_events"
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))

@@ -133,3 +133,28 @@ class AuditEventRead(BaseModel):
     created_at: datetime
 
     model_config = {"from_attributes": True}
+
+
+class ExposureRead(BaseModel):
+    id: str
+    inventory_scope_id: str
+    profile_id: str
+    latest_run_id: str
+    zone: str
+    address: str
+    protocol: str
+    port: int
+    service: str | None
+    product: str | None
+    version: str | None
+    first_seen_at: datetime
+    last_seen_at: datetime
+
+    model_config = {"from_attributes": True}
+
+
+class ExposureSummary(BaseModel):
+    open_hosts: int
+    open_services: int
+    unique_ports: int
+    latest_observation_at: datetime | None

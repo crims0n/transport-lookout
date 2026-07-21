@@ -4,13 +4,14 @@ from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from fastapi import Depends, FastAPI, HTTPException, status
 from fastapi.middleware.cors import CORSMiddleware
+from sqlalchemy import func
 from sqlalchemy.orm import Session
 
 from .auth import current_user, require_roles
 from .config import settings
 from .db import get_session
-from .models import AuditEvent, HostObservation, InventoryScope, Role, ScanProfile, ScanRun, ScanSchedule, ScanShard, ServiceObservation, User
-from .schemas import AuditEventRead, HostRead, ProfileCreate, ProfileRead, RunCreate, RunRead, ScheduleCreate, ScheduleRead, ScopeCreate, ScopeRead, ServiceRead, UserProvision, UserRead
+from .models import AuditEvent, CurrentExposure, HostObservation, InventoryScope, Role, ScanProfile, ScanRun, ScanSchedule, ScanShard, ServiceObservation, User
+from .schemas import AuditEventRead, ExposureRead, ExposureSummary, HostRead, ProfileCreate, ProfileRead, RunCreate, RunRead, ScheduleCreate, ScheduleRead, ScopeCreate, ScopeRead, ServiceRead, UserProvision, UserRead
 from .services import audit, cancel_run, create_run, parse_approved_cidr
 
 
@@ -171,6 +172,26 @@ def list_runs(limit: int = 50, session: Session = Depends(get_session), _: User 
 @app.get("/v1/audit-events", response_model=list[AuditEventRead])
 def list_audit_events(limit: int = 100, session: Session = Depends(get_session), _: User = Depends(require_roles(Role.platform_admin, Role.auditor))):
     return session.query(AuditEvent).order_by(AuditEvent.created_at.desc()).limit(min(max(limit, 1), 500)).all()
+
+
+@app.get("/v1/exposures", response_model=list[ExposureRead])
+def list_exposures(scope_id: str | None = None, host: str | None = None, port: int | None = None, service: str | None = None, limit: int = 100, offset: int = 0, session: Session = Depends(get_session), _: User = Depends(current_user)):
+    query = session.query(CurrentExposure)
+    if scope_id:
+        query = query.filter(CurrentExposure.inventory_scope_id == scope_id)
+    if host:
+        query = query.filter(CurrentExposure.address == host)
+    if port:
+        query = query.filter(CurrentExposure.port == port)
+    if service:
+        query = query.filter(CurrentExposure.service.ilike(f"%{service}%"))
+    return query.order_by(CurrentExposure.address, CurrentExposure.port).offset(max(offset, 0)).limit(min(max(limit, 1), 500)).all()
+
+
+@app.get("/v1/exposures/summary", response_model=ExposureSummary)
+def exposure_summary(session: Session = Depends(get_session), _: User = Depends(current_user)):
+    open_hosts, open_services, unique_ports, latest = session.query(func.count(func.distinct(CurrentExposure.address)), func.count(CurrentExposure.id), func.count(func.distinct(CurrentExposure.port)), func.max(CurrentExposure.last_seen_at)).one()
+    return ExposureSummary(open_hosts=open_hosts, open_services=open_services, unique_ports=unique_ports, latest_observation_at=latest)
 
 
 @app.get("/v1/scan-runs/{run_id}/hosts", response_model=list[HostRead])

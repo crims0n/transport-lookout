@@ -15,7 +15,7 @@ from .config import settings
 from .db import SessionLocal
 from .models import RunStatus, ScanProfile, ScanRun, ScanShard, ShardStatus
 from .results import normalize_nmap_xml, store_artifact
-from .services import dispatch_available_shards
+from .services import dispatch_available_shards, materialize_current_exposures
 
 celery = Celery("scanpod_enterprise", broker=settings.amqp_url)
 celery.conf.task_default_queue = "scan-shards"
@@ -96,5 +96,7 @@ def execute_shard(self, shard_id: str) -> None:
             failed = session.query(ScanShard).filter(ScanShard.run_id == run.id, ScanShard.status.in_([ShardStatus.failed, ShardStatus.dead_letter])).count()
             run.status = RunStatus.failed if failed else RunStatus.completed
             run.completed_at = datetime.now(timezone.utc)
+            if run.status == RunStatus.completed:
+                materialize_current_exposures(session, run)
         session.commit()
         dispatch_available_shards(session, run.id)
