@@ -13,6 +13,28 @@ jobs:
       - run: ruff check .
       - run: pytest -q
       - run: docker build -t transport-lookout:${{ github.sha }} .
+  postgres-migrations:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_DB: transport_lookout
+          POSTGRES_USER: transport_lookout
+          POSTGRES_PASSWORD: transport_lookout
+        ports: [5432:5432]
+        options: >-
+          --health-cmd "pg_isready -U transport_lookout -d transport_lookout"
+          --health-interval 5s --health-timeout 5s --health-retries 10
+    env:
+      SCANPOD_DATABASE_URL: postgresql+psycopg://transport_lookout:transport_lookout@localhost:5432/transport_lookout
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: { python-version: '3.12' }
+      - run: pip install .
+      - run: alembic upgrade head
+      - run: alembic current --check-heads
   ui:
     runs-on: ubuntu-latest
     defaults:
