@@ -1,7 +1,7 @@
 from datetime import datetime, timedelta, timezone
 
 from scanpod_enterprise.db import SessionLocal
-from scanpod_enterprise.models import CurrentExposure, HostObservation, InventoryScope, RunStatus, ScanProfile, ScanRun, ScanShard, ServiceObservation
+from scanpod_enterprise.models import CurrentExposure, DiscoveryObservation, HostObservation, InventoryScope, RunStatus, ScanProfile, ScanRun, ScanShard, ServiceObservation
 from scanpod_enterprise.services import exposure_diff
 
 
@@ -55,7 +55,10 @@ def test_exposure_diff_withholds_changes_when_masscan_coverage_is_incomplete():
         current = ScanRun(inventory_scope_id=scope.id, profile_id=profile.id, requested_by="operator", status=RunStatus.completed, completed_at=datetime.now(timezone.utc))
         session.add_all([previous, current])
         session.flush()
-        session.add(ScanShard(run_id=current.id, cidr="10.82.0.0/24", zone="default", discovery_artifact_key="runs/current/masscan.xml"))
+        shard = ScanShard(run_id=current.id, cidr="10.82.0.0/24", zone="default", discovery_artifact_key="runs/current/masscan.xml")
+        session.add(shard)
+        session.flush()
+        session.add(DiscoveryObservation(run_id=current.id, shard_id=shard.id, address="10.82.0.10", protocol="tcp", port=443))
         session.commit()
 
         observed, baseline, changes, coverage_complete = exposure_diff(session, scope.id, profile.id)

@@ -11,7 +11,7 @@ from .config import settings
 from .db import SessionLocal
 from .models import DiscoveryObservation, RunStatus, ScanProfile, ScanRun, ScanShard, ShardStatus
 from .results import masscan_observations, normalize_nmap_xml, store_artifact
-from .services import audit, dispatch_available_shards, materialize_current_exposures
+from .services import audit, dispatch_available_shards, finalize_terminal_run
 
 celery = Celery("scanpod_enterprise", broker=settings.amqp_url)
 celery.conf.task_default_queue = "scan-shards"
@@ -120,22 +120,6 @@ def execute_shard(self, shard_id: str) -> None:
 
         shard.worker_id = None
         shard.heartbeat_at = None
-        terminal = session.query(ScanShard).filter(
-            ScanShard.run_id == run.id,
-            ScanShard.status.notin_([ShardStatus.completed, ShardStatus.failed, ShardStatus.cancelled, ShardStatus.dead_letter]),
-        ).count() == 0
-        if terminal:
-            failed = session.query(ScanShard).filter(ScanShard.run_id == run.id, ScanShard.status.in_([ShardStatus.failed, ShardStatus.dead_letter])).count()
-            run.status = RunStatus.failed if failed else RunStatus.completed
-            run.completed_at = datetime.now(timezone.utc)
-            unconfirmed_discovery = session.query(ScanShard).filter(
-                ScanShard.run_id == run.id,
-                ScanShard.discovery_artifact_key.is_not(None),
-                ScanShard.artifact_key.is_(None),
-            ).count()
-            if run.status == RunStatus.completed and not unconfirmed_discovery:
-                materialize_current_exposures(session, run)
-            elif run.status == RunStatus.completed:
-                audit(session, "worker", "run.inventory_update_skipped", "scan_run", run.id, reason="incomplete_masscan_coverage", shards=unconfirmed_discovery)
+        finalize_terminal_run(session, run, "worker")
         session.commit()
         dispatch_available_shards(session, run.id)

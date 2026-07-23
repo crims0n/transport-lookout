@@ -6,7 +6,7 @@ from sqlalchemy import or_
 from sqlalchemy.orm import Session
 
 from .config import settings
-from .models import AuditEvent, CurrentExposure, HostObservation, InventoryScope, OutboxEvent, RunStatus, ScanProfile, ScanRun, ScanShard, ServiceObservation
+from .models import AuditEvent, CurrentExposure, DiscoveryObservation, HostObservation, InventoryScope, OutboxEvent, RunStatus, ScanProfile, ScanRun, ScanShard, ServiceObservation
 from .models import ShardStatus
 
 
@@ -115,22 +115,75 @@ def recover_expired_leases(session: Session, now: datetime | None = None) -> int
     return len(stale)
 
 
+TERMINAL_SHARD_STATUSES = {
+    ShardStatus.completed,
+    ShardStatus.failed,
+    ShardStatus.cancelled,
+    ShardStatus.dead_letter,
+}
+
+
+def incomplete_discovery_shards(session: Session, run_id: str) -> int:
+    """Return discovery shards with candidates but no completed Nmap artifact.
+
+    A Masscan artifact by itself does not mean coverage is incomplete: a shard
+    with no candidates correctly skips Nmap. Discovery observations are only
+    recorded when Masscan found an address/port candidate.
+    """
+    return (
+        session.query(ScanShard.id)
+        .join(DiscoveryObservation, DiscoveryObservation.shard_id == ScanShard.id)
+        .filter(
+            ScanShard.run_id == run_id,
+            ScanShard.artifact_key.is_(None),
+        )
+        .distinct()
+        .count()
+    )
+
+
+def finalize_terminal_run(session: Session, run: ScanRun, actor: str) -> bool:
+    """Finalize a run once every shard has reached a durable terminal state.
+
+    This is deliberately shared by workers and scheduler recovery so the
+    current-exposure safety gate is identical in normal and recovery paths.
+    """
+    if run.status not in {RunStatus.queued, RunStatus.running}:
+        return False
+    # SessionLocal disables autoflush. Persist a finishing worker's shard state
+    # before the terminal-state query below so the query can see that shard.
+    session.flush()
+    pending = session.query(ScanShard).filter(
+        ScanShard.run_id == run.id,
+        ScanShard.status.notin_(TERMINAL_SHARD_STATUSES),
+    ).count()
+    if pending:
+        return False
+
+    failed = session.query(ScanShard).filter(
+        ScanShard.run_id == run.id,
+        ScanShard.status.in_([ShardStatus.failed, ShardStatus.dead_letter]),
+    ).count()
+    run.status = RunStatus.failed if failed else RunStatus.completed
+    run.completed_at = datetime.now(timezone.utc)
+    if run.status == RunStatus.completed:
+        incomplete = incomplete_discovery_shards(session, run.id)
+        if not incomplete:
+            materialize_current_exposures(session, run)
+        else:
+            audit(session, actor, "run.inventory_update_skipped", "scan_run", run.id,
+                  reason="incomplete_masscan_coverage", shards=incomplete)
+    audit(session, actor, "run.finalized", "scan_run", run.id)
+    return True
+
+
 def reconcile_terminal_runs(session: Session) -> int:
     """Finalize parent runs from durable shard state, independent of worker exit timing."""
     reconciled = 0
-    terminal = {ShardStatus.completed, ShardStatus.failed, ShardStatus.cancelled, ShardStatus.dead_letter}
     runs = session.query(ScanRun).filter(ScanRun.status.in_([RunStatus.queued, RunStatus.running])).all()
     for run in runs:
-        shards = session.query(ScanShard).filter_by(run_id=run.id).all()
-        if not shards or any(shard.status not in terminal for shard in shards):
-            continue
-        failed = any(shard.status in {ShardStatus.failed, ShardStatus.dead_letter} for shard in shards)
-        run.status = RunStatus.failed if failed else RunStatus.completed
-        run.completed_at = datetime.now(timezone.utc)
-        if run.status == RunStatus.completed:
-            materialize_current_exposures(session, run)
-        audit(session, "scheduler", "run.reconciled", "scan_run", run.id, terminal_shards=len(shards))
-        reconciled += 1
+        if finalize_terminal_run(session, run, "scheduler"):
+            reconciled += 1
     if reconciled:
         session.commit()
     return reconciled
@@ -160,12 +213,7 @@ def exposure_diff(session: Session, scope_id: str, profile_id: str) -> tuple[Sca
     if not runs:
         return None, None, [], True
     current, previous = runs[0], runs[1] if len(runs) == 2 else None
-    incomplete_discovery = session.query(ScanShard).filter(
-        ScanShard.run_id == current.id,
-        ScanShard.discovery_artifact_key.is_not(None),
-        ScanShard.artifact_key.is_(None),
-    ).first()
-    if incomplete_discovery:
+    if incomplete_discovery_shards(session, current.id):
         return current, previous, [], False
 
     def observations(run: ScanRun) -> tuple[dict[tuple[str, str, int], ServiceObservation], set[str]]:
@@ -218,6 +266,8 @@ def backfill_current_exposures(session: Session) -> int:
     for run in session.query(ScanRun).filter_by(status=RunStatus.completed).order_by(ScanRun.completed_at.desc()).all():
         key = (run.inventory_scope_id, run.profile_id)
         if key in seen:
+            continue
+        if incomplete_discovery_shards(session, run.id):
             continue
         materialize_current_exposures(session, run)
         seen.add(key)
