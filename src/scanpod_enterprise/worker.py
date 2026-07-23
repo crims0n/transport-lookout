@@ -123,8 +123,9 @@ def execute_shard(self, shard_id: str) -> None:
                 shard.error = "cancelled by operator"
             else:
                 shard.status = ShardStatus.completed
-        except (subprocess.CalledProcessError, subprocess.TimeoutExpired) as exc:
-            shard.error = (getattr(exc, "stderr", None) or str(exc)).strip()
+        except Exception as exc:
+            detail = (getattr(exc, "stderr", None) or str(exc)).strip()
+            shard.error = f"{type(exc).__name__}: {detail or 'no error detail'}"
             if shard.attempts >= settings.max_shard_attempts:
                 shard.status = ShardStatus.dead_letter
             else:
