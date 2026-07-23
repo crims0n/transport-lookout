@@ -9,10 +9,12 @@ See the [production architecture diagram](docs/architecture.md) for the control 
 - OIDC authentication, role-based access control, and local development bootstrap access
 - Approved inventory scopes (including atomic CSV import) and controlled, versioned scan profiles—operators cannot submit arbitrary targets or Nmap arguments
 - Scheduled and on-demand scans, with `/16` networks deterministically sharded into `/24` work units
-- RabbitMQ/Celery workers with bounded concurrency, durable outbox delivery, leases, heartbeats, retry backoff, dead-letter state, and active-scan cancellation
+- RabbitMQ/Celery workers with bounded concurrency, durable outbox delivery, heartbeats, retry backoff, dead-letter state, and active-scan cancellation
+- Execution-token fencing for every shard lease: recovered work receives a new token, and superseded workers cannot persist stale observations, artifacts, or terminal state
 - Controlled `masscan_then_nmap` profiles for fast TCP discovery followed by Nmap confirmation; only confirmed Nmap observations change inventory state. TCP discovery gaps are treated as incomplete coverage, never as closed services.
-- PostgreSQL-backed run, shard, audit, host, and service history with Alembic migrations
-- Current Exposure Inventory: a deduplicated view of currently observed open host/port combinations, including first- and last-seen times
+- Consistent worker and scheduler finalization with coverage-safe inventory updates and bounded retry/dead-letter handling for scanner, parsing, and artifact-storage failures
+- PostgreSQL-backed run, shard, audit, host, service, and discovery history with Alembic migrations
+- Current Exposure Inventory: a deduplicated view of currently observed open host/port combinations, including first seen, last seen, and scan count
 - Historical exposure diffs between completed scans: opened and closed ports, disappeared hosts, and changed service fingerprints
 - Filtered current-exposure exports in CSV or JSON
 - React Operator Console for CSV inventory import and approval, profiles, schedules, runs, result review, audit events, exposure filtering, exports, and change review
@@ -69,6 +71,8 @@ Profiles support two controlled scanner modes:
 
 Masscan observations are candidates, not inventory facts. The Run Results panel shows them separately from Nmap-confirmed hosts, along with separate discovery and confirmation artifact keys. Only confirmed Nmap results update Current Exposure Inventory and historical exposure diffs. A shard with no Masscan candidates is complete; inventory replacement and diff generation are withheld only if discovered candidates lack their Nmap confirmation artifact, so an interrupted confirmation cannot be interpreted as a closed port or disappeared host.
 
+Each dispatched shard receives a unique execution token. Raw Masscan and Nmap artifacts are stored under token-specific paths, and workers must still own that token before persisting results or changing shard state. If lease recovery re-dispatches a shard, a superseded worker rolls back its pending observations and cannot overwrite the replacement attempt.
+
 Use this mode for broad TCP coverage where completion time matters. Keep rates conservative at first and validate packet loss, candidate-to-confirmation ratios, and worker resource usage in an authorized staging zone before increasing the profile rate.
 
 ## Production notes
@@ -78,6 +82,8 @@ Production deployments must disable bootstrap access and configure OIDC issuer, 
 The chart runs Alembic as a pre-install/pre-upgrade Job and expects a pre-created Secret containing `database-url` and `amqp-url`. Point `env.existingSecret` at that Secret; do not place production URLs in committed values files. It includes a service account that can be annotated for workload identity when using S3 artifacts. `networkPolicy` is intentionally opt-in because ingress-controller and monitoring namespace labels vary by cluster.
 
 Raw scan XML uses filesystem storage by default, which keeps local Docker Compose testing self-contained. For durable production storage set `SCANPOD_ARTIFACT_BACKEND=s3` and provide `SCANPOD_ARTIFACT_S3_BUCKET`; optionally configure `SCANPOD_ARTIFACT_S3_PREFIX`, `SCANPOD_ARTIFACT_S3_REGION`, and `SCANPOD_ARTIFACT_S3_ENDPOINT_URL` for an S3-compatible service. Credentials come from the worker's standard AWS SDK credential chain.
+
+Scanner command failures, malformed result XML, and artifact-storage failures use the same bounded retry policy. Persistent failures transition the shard to `dead_letter` rather than leaving it running until lease recovery.
 
 ## Operations endpoints
 
