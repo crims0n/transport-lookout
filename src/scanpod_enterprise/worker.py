@@ -19,6 +19,23 @@ celery.conf.task_acks_late = True
 celery.conf.task_reject_on_worker_lost = True
 
 
+def nmap_confirmation_command(profile: ScanProfile, output: Path, targets: Path) -> list[str]:
+    """Build Nmap's second-stage command for Masscan-proven candidates."""
+    return [
+        "nmap",
+        "-Pn",
+        "-oX",
+        str(output),
+        "-iL",
+        str(targets),
+        "-p",
+        profile.ports,
+        *profile.arguments.split(),
+        "--max-rate",
+        str(profile.max_rate),
+    ]
+
+
 @celery.task(bind=True, autoretry_for=(OSError,), retry_backoff=True, retry_kwargs={"max_retries": 2})
 def execute_shard(self, shard_id: str) -> None:
     with SessionLocal() as session:
@@ -89,7 +106,7 @@ def execute_shard(self, shard_id: str) -> None:
                     audit(session, "worker", "shard.discovery.completed", "scan_shard", shard.id, candidates=len(candidates), open_ports=len(observations), scanner="masscan")
                     if candidates:
                         targets_file.write_text("\n".join(candidates) + "\n")
-                        run_command(["nmap", "-oX", str(confirmation_xml), "-iL", str(targets_file), "-p", profile.ports, *profile.arguments.split(), "--max-rate", str(profile.max_rate)])
+                        run_command(nmap_confirmation_command(profile, confirmation_xml, targets_file))
                         if not cancelled:
                             normalize_nmap_xml(session, confirmation_xml, run.id, shard.id)
                             shard.artifact_key = store_artifact(confirmation_xml, run.id, shard.id, "nmap")

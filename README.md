@@ -65,9 +65,9 @@ The exposure comparison reports newly opened and closed ports, hosts that were n
 Profiles support two controlled scanner modes:
 
 - **Nmap confirmation** — Nmap scans every address in each approved shard, which is the default mode.
-- **Masscan discovery + Nmap** — Masscan performs a TCP-only discovery pass using the profile's approved port list and `max_rate`; Nmap then confirms and enriches only the discovered hosts.
+- **Masscan discovery + Nmap** — Masscan performs a TCP-only discovery pass using the profile's approved port list and `max_rate`; Nmap then confirms and enriches only the discovered hosts. Confirmation uses `-Pn`, avoiding a redundant host-discovery phase for candidates that Masscan has already proven reachable.
 
-Masscan observations are candidates, not inventory facts. The Run Results panel shows them separately from Nmap-confirmed hosts, along with separate discovery and confirmation artifact keys. Only confirmed Nmap results update Current Exposure Inventory and historical exposure diffs. If any Masscan shard has no candidate to confirm, the run is marked as incomplete for inventory replacement and diff generation so an absent response cannot be interpreted as a closed port or disappeared host.
+Masscan observations are candidates, not inventory facts. The Run Results panel shows them separately from Nmap-confirmed hosts, along with separate discovery and confirmation artifact keys. Only confirmed Nmap results update Current Exposure Inventory and historical exposure diffs. A shard with no Masscan candidates is complete; inventory replacement and diff generation are withheld only if discovered candidates lack their Nmap confirmation artifact, so an interrupted confirmation cannot be interpreted as a closed port or disappeared host.
 
 Use this mode for broad TCP coverage where completion time matters. Keep rates conservative at first and validate packet loss, candidate-to-confirmation ratios, and worker resource usage in an authorized staging zone before increasing the profile rate.
 
