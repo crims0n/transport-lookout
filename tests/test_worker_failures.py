@@ -1,4 +1,5 @@
 from datetime import datetime, timezone
+import uuid
 
 import pytest
 
@@ -40,6 +41,7 @@ def leased_nmap_shard(session, name: str) -> ScanShard:
         zone="default",
         status=ShardStatus.leased,
         lease_expires_at=datetime.now(timezone.utc),
+        lease_token=str(uuid.uuid4()),
     )
     session.add(shard)
     session.commit()
@@ -63,7 +65,7 @@ def test_result_handling_errors_requeue_shards_without_waiting_for_lease_expiry(
 
     with SessionLocal() as session:
         shard = leased_nmap_shard(session, failure)
-        worker.execute_shard.run(shard.id)
+        worker.execute_shard.run(shard.id, shard.lease_token)
 
         session.expire_all()
         updated = session.get(ScanShard, shard.id)
@@ -80,7 +82,7 @@ def test_result_handling_error_dead_letters_at_the_attempt_limit(monkeypatch):
 
     with SessionLocal() as session:
         shard = leased_nmap_shard(session, "dead-letter")
-        worker.execute_shard.run(shard.id)
+        worker.execute_shard.run(shard.id, shard.lease_token)
 
         session.expire_all()
         updated = session.get(ScanShard, shard.id)

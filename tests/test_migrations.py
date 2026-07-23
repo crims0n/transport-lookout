@@ -18,7 +18,7 @@ def test_blank_database_upgrades_to_the_current_schema(tmp_path):
 
     inspector = inspect(engine)
     assert {"inventory_scopes", "scan_profiles", "scan_runs", "scan_shards", "outbox_events", "current_exposures", "discovery_observations"} <= set(inspector.get_table_names())
-    assert {"worker_id", "heartbeat_at", "retry_not_before"} <= {column["name"] for column in inspector.get_columns("scan_shards")}
+    assert {"worker_id", "heartbeat_at", "retry_not_before", "lease_token"} <= {column["name"] for column in inspector.get_columns("scan_shards")}
     assert "discovery_artifact_key" in {column["name"] for column in inspector.get_columns("scan_shards")}
     assert "max_concurrent_shards" in {column["name"] for column in inspector.get_columns("scan_profiles")}
     assert "scanner_mode" in {column["name"] for column in inspector.get_columns("scan_profiles")}

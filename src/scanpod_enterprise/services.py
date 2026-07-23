@@ -1,4 +1,5 @@
 import ipaddress
+import uuid
 from datetime import datetime, timedelta, timezone
 
 from fastapi import HTTPException, status
@@ -66,10 +67,11 @@ def dispatch_available_shards(session: Session, run_id: str) -> int:
     shards = (session.query(ScanShard).filter(ScanShard.run_id == run_id, ScanShard.status == ShardStatus.queued, or_(ScanShard.retry_not_before.is_(None), ScanShard.retry_not_before <= now)).order_by(ScanShard.cidr).limit(capacity).with_for_update(skip_locked=True).all())
     for shard in shards:
         shard.status = ShardStatus.leased
+        shard.lease_token = str(uuid.uuid4())
         shard.dispatched_at = now
         shard.lease_expires_at = now + timedelta(seconds=settings.shard_lease_seconds)
         shard.retry_not_before = None
-        session.add(OutboxEvent(topic="scan_shard", payload={"shard_id": shard.id}))
+        session.add(OutboxEvent(topic="scan_shard", payload={"shard_id": shard.id, "lease_token": shard.lease_token}))
     # The lease and durable publish intent must commit together. If the process
     # stops before broker delivery, the publisher can safely retry the outbox.
     session.commit()
@@ -83,8 +85,21 @@ def publish_pending_outbox(session: Session, limit: int = 100) -> int:
     from .worker import celery
     delivered = 0
     for event in pending:
+        # A rolling upgrade can leave a durable pre-fencing event without a
+        # token. Bind one to its still-leased shard before sending it so the
+        # upgraded worker can claim it safely instead of stranding the work.
+        if event.topic == "scan_shard" and not event.payload.get("lease_token"):
+            shard = session.get(ScanShard, event.payload["shard_id"])
+            if not shard or shard.status != ShardStatus.leased:
+                event.delivered_at = datetime.now(timezone.utc)
+                event.last_error = "superseded before execution fencing upgrade"
+                session.commit()
+                continue
+            shard.lease_token = str(uuid.uuid4())
+            event.payload = {**event.payload, "lease_token": shard.lease_token}
+            session.commit()
         try:
-            celery.send_task("scanpod_enterprise.worker.execute_shard", args=[event.payload["shard_id"]])
+            celery.send_task("scanpod_enterprise.worker.execute_shard", args=[event.payload["shard_id"], event.payload["lease_token"]])
         except Exception as exc:  # broker outages must not lose the durable event
             event.attempts += 1
             event.last_error = str(exc)
@@ -106,6 +121,7 @@ def recover_expired_leases(session: Session, now: datetime | None = None) -> int
     )).all()
     for shard in stale:
         shard.status = ShardStatus.queued
+        shard.lease_token = None
         shard.lease_expires_at = None
         shard.worker_id = None
         shard.heartbeat_at = None

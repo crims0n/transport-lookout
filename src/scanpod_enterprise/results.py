@@ -9,12 +9,14 @@ from .config import settings
 from .models import HostObservation, ServiceObservation
 
 
-def artifact_key(run_id: str, shard_id: str, stage: str = "nmap") -> str:
+def artifact_key(run_id: str, shard_id: str, stage: str = "nmap", lease_token: str | None = None) -> str:
     """Return a controlled storage key; never derive it from client input."""
+    if lease_token:
+        return f"runs/{run_id}/shards/{shard_id}/attempts/{lease_token}/{stage}.xml"
     return f"runs/{run_id}/shards/{shard_id}/{stage}.xml"
 
 
-def store_artifact(source: Path, run_id: str, shard_id: str, stage: str = "nmap") -> str:
+def store_artifact(source: Path, run_id: str, shard_id: str, stage: str = "nmap", lease_token: str | None = None) -> str:
     """Persist an XML artifact to the configured durable storage backend.
 
     Filesystem storage remains the development default.  Production can select
@@ -22,7 +24,7 @@ def store_artifact(source: Path, run_id: str, shard_id: str, stage: str = "nmap"
     execution flow.  Credentials use the standard boto3 provider chain, so no
     cloud secret is stored in application configuration.
     """
-    key = artifact_key(run_id, shard_id, stage)
+    key = artifact_key(run_id, shard_id, stage, lease_token)
     if settings.artifact_backend == "filesystem":
         destination = Path(settings.artifact_root) / key
         destination.parent.mkdir(parents=True, exist_ok=True)
@@ -62,7 +64,7 @@ def masscan_observations(xml_path: Path) -> list[tuple[str, str, int]]:
     return sorted(set(observations))
 
 
-def normalize_nmap_xml(session: Session, xml_path: Path, run_id: str, shard_id: str) -> int:
+def normalize_nmap_xml(session: Session, xml_path: Path, run_id: str, shard_id: str, lease_token: str | None = None) -> int:
     root = ET.parse(xml_path).getroot()
     count = 0
     for host_node in root.findall("host"):
@@ -76,6 +78,7 @@ def normalize_nmap_xml(session: Session, xml_path: Path, run_id: str, shard_id: 
         host = HostObservation(
             run_id=run_id,
             shard_id=shard_id,
+            lease_token=lease_token,
             address=address_node.attrib["addr"],
             state=status_node.attrib.get("state", "unknown"),
             hostname=hostname_node.attrib.get("name") if hostname_node is not None else None,
